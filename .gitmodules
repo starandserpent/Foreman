@@ -1,6 +1,0 @@
-[submodule "Weltschmerz"]
-	path = Weltschmerz
-	url = git@github.com:starandserpent/Weltschmerz.git
-[submodule "Terra"]
-	path = Terra
-	url = git@github.com:starandserpent/Terra.git
