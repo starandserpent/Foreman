@@ -177,7 +177,7 @@ public class Foreman
         //OctreeNode childNode = new OctreeNode();
 
         Chunk chunk;
-        if (y << Constants.CHUNK_EXPONENT > weltschmerz.GetMaxElevation())
+        if (y << Constants.CHUNK_EXPONENT > weltschmerz.GetConfig().elevation.max_elevation)
         {
             chunk = new Chunk();
             chunk.isEmpty = true;
