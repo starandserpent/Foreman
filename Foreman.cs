@@ -29,8 +29,8 @@ public class Foreman
     private volatile List<long> chunkSpeed;
     private Threading[] threads;
     private volatile ManualResetEvent _event;
-    LoadMarker marker = null;
-    Thread GenerateThread;
+    private LoadMarker marker = null;
+    private Thread GenerateThread;
     public volatile static int chunksLoaded = 0;
     public volatile static int chunksPlaced = 0;
     public volatile static int generateLoops = 0;
