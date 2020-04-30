@@ -178,11 +178,12 @@ public class Foreman {
                 chunk.z = (uint) z << Constants.CHUNK_EXPONENT;
             }
         }
+        chunksPlaced++;
         terra.PlaceChunk (x, y, z, chunk);
         if (!chunk.isEmpty) {
             mesher.MeshChunk (chunk);
         }
-        
+
         if(chunksPlaced == 500){
             stopwatch.Stop();
             Godot.GD.Print("500 chunks took " + stopwatch.ElapsedMilliseconds +" ms");
