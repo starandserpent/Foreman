@@ -17,9 +17,8 @@ public class Foreman {
     private int grassMeshID;
     private volatile Weltschmerz weltschmerz;
     private volatile Terra terra;
-    int viewDistance = 0;
-    int maxViewDistance;
-
+    private int viewDistance = 0;
+    private int maxViewDistance;
     private float fov;
     private int generationThreads;
     private List<GodotVector3> localCenters;
@@ -179,12 +178,11 @@ public class Foreman {
                 chunk.z = (uint) z << Constants.CHUNK_EXPONENT;
             }
         }
-        chunksPlaced++;
         terra.PlaceChunk (x, y, z, chunk);
         if (!chunk.isEmpty) {
             mesher.MeshChunk (chunk);
         }
-
+        
         if(chunksPlaced == 500){
             stopwatch.Stop();
             Godot.GD.Print("500 chunks took " + stopwatch.ElapsedMilliseconds +" ms");
@@ -214,7 +212,7 @@ public class Foreman {
 
         chunk.materials = 1;
 
-        chunk.voxels = ArrayPool<uint>.Shared.Rent (Constants.CHUNK_SIZE3D);
+        uint[] voxels = ArrayPool<uint>.Shared.Rent (Constants.CHUNK_SIZE3D);
 
         chunk.isEmpty = true;
 
@@ -236,20 +234,20 @@ public class Foreman {
                     bitPos = (uint) elev << 8;
                     bitValue = (uint) dirtID;
 
-                    chunk.voxels[lastPosition] = (bitPos | bitValue);
+                    voxels[lastPosition] = (bitPos | bitValue);
 
                     lastPosition++;
 
                     bitPos = (uint) 1 << 8;
                     bitValue = (uint) grassID;
 
-                    chunk.voxels[lastPosition] = (bitPos | bitValue);
+                    voxels[lastPosition] = (bitPos | bitValue);
 
                     lastPosition++;
                     bitPos = (uint) (Constants.CHUNK_SIZE1D - elev - 1) << 8;
                     bitValue = (uint) 0;
 
-                    chunk.voxels[lastPosition] = (bitPos | bitValue);
+                    voxels[lastPosition] = (bitPos | bitValue);
 
                     lastPosition++;
 
@@ -260,14 +258,14 @@ public class Foreman {
                     uint bitValue = (uint) dirtID;
                     chunk.isEmpty = false;
 
-                    chunk.voxels[lastPosition] = (bitPos | bitValue);
+                    voxels[lastPosition] = (bitPos | bitValue);
 
                     lastPosition++;
                 } else if (elevation / Constants.CHUNK_SIZE1D < posy / Constants.CHUNK_SIZE1D) {
                     uint bitPos = (uint) (Constants.CHUNK_SIZE1D) << 8;
                     uint bitValue = (uint) 0;
 
-                    chunk.voxels[lastPosition] = (bitPos | bitValue);
+                    voxels[lastPosition] = (bitPos | bitValue);
 
                     lastPosition++;
                 }
@@ -276,8 +274,16 @@ public class Foreman {
 
         if (chunk.isSurface) {
             chunk.materials = 3;
+            chunk.voxels = new uint[lastPosition];
+            Array.ConstrainedCopy(voxels, 0, chunk.voxels, 0, lastPosition);
+            ArrayPool<uint>.Shared.Return (voxels);
+        }else{
+            if(chunk.isEmpty){
+                chunk.voxels = new uint[1]{0};
+            }else{
+                chunk.voxels = new uint[1]{(uint)dirtID};
+            }
         }
-        chunksLoaded++;
         return chunk;
     }
 
