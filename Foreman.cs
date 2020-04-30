@@ -38,6 +38,8 @@ public class Foreman {
 
     public volatile static int positionsNeeded = 0;
 
+    private Stopwatch stopwatch;
+
     public Foreman (Weltschmerz weltschmerz, Terra terra, Registry registry, GameMesher mesher,
         int viewDistance, float fov, int generationThreads) {
         this.weltschmerz = weltschmerz;
@@ -52,6 +54,7 @@ public class Foreman {
         centerQueue = new ConcurrentQueue<GodotVector3> ();
         chunkSpeed = new List<long> ();
         threads = new Threading[generationThreads];
+        stopwatch = new Stopwatch();
 
         for (int t = 0; t < generationThreads; t++) {
             threads[t] = new Threading (() => Process ());
@@ -148,6 +151,9 @@ public class Foreman {
     //Loads chunks
     private void LoadArea (int x, int y, int z) {
         //OctreeNode childNode = new OctreeNode();
+        if(chunksPlaced == 0){
+            stopwatch.Start();
+        }
 
         Chunk chunk;
         if (y << Constants.CHUNK_EXPONENT > weltschmerz.GetConfig ().elevation.max_elevation) {
@@ -177,6 +183,11 @@ public class Foreman {
         terra.PlaceChunk (x, y, z, chunk);
         if (!chunk.isEmpty) {
             mesher.MeshChunk (chunk);
+        }
+
+        if(chunksPlaced == 500){
+            stopwatch.Stop();
+            Godot.GD.Print("500 chunks took " + stopwatch.ElapsedMilliseconds +" ms");
         }
     }
 
