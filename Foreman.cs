@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
@@ -16,7 +17,6 @@ public class Foreman {
 	private int grassMeshID;
 	private volatile Weltschmerz weltschmerz;
 	private volatile Terra terra;
-	private int viewDistance = 0;
 	private int maxViewDistance;
 	private float fov;
 	private int generationThreads;
@@ -30,7 +30,6 @@ public class Foreman {
 	private Thread GenerateThread;
 	public volatile static int chunksLoaded = 0;
 	public volatile static int chunksPlaced = 0;
-	public volatile static int generateLoops = 0;
 	public volatile static int positionsScreened = 0;
 	public volatile static int positionsInRange = 0;
 
@@ -42,6 +41,7 @@ public class Foreman {
 		int viewDistance, float fov, int generationThreads) {
 		this.weltschmerz = weltschmerz;
 		this.terra = terra;
+		GenerateThread = new Threading (() => AddLoadMarker (marker));
 		_event = new ManualResetEvent (true);
 		this.octree = terra.GetOctree ();
 		maxViewDistance = viewDistance;
@@ -52,15 +52,12 @@ public class Foreman {
 		centerQueue = new ConcurrentQueue<GodotVector3> ();
 		chunkSpeed = new List<long> ();
 		threads = new Threading[generationThreads];
-		stopwatch = new Stopwatch();
+		stopwatch = new Stopwatch ();
 
 		for (int t = 0; t < generationThreads; t++) {
 			threads[t] = new Threading (() => Process ());
 			threads[t].Start ();
 		}
-
-		GenerateThread = new Threading (() => GenerateProcess ());
-		GenerateThread.Start ();
 
 		for (int l = -maxViewDistance; l < maxViewDistance; l += 8) {
 			for (int y = -Utils.GetPosFromFOV (fov, l); y < Utils.GetPosFromFOV (fov, l); y += 8) {
@@ -73,75 +70,40 @@ public class Foreman {
 		localCenters = localCenters.OrderBy (p => p.DistanceTo (GodotVector3.Zero)).ToList ();
 	}
 
-	void GenerateProcess () {
-		LoadMarker thisMarker = null;
-		Godot.Transform lastTransform = Godot.Transform.Identity;
-		while (runThread) {
-
-			lock (this) {
-				if (marker != null && marker.Transform != lastTransform) {
-					thisMarker = marker;
-					lastTransform = marker.Transform;
-					generateLoops++;
-				}
-			}
-			if (thisMarker != null)
-				generateTerrain (thisMarker);
-			lock (this) {
-				marker = null;
-			}
-			thisMarker = null;
-
-		}
-	}
-
 	public void GenerateTerrain (LoadMarker loadMarker) {
-		lock (this) {
-			if (marker == null) {
-				marker = loadMarker;
-			}
+		if (GenerateThread.IsAlive) {
+			GenerateThread.Join ();
 		}
+		GenerateThread = new Threading (() => AddLoadMarker (loadMarker));
+		centerQueue = new ConcurrentQueue<GodotVector3> ();
+		GenerateThread.Start ();
 	}
 
 	//Initial generation
-	void generateTerrain (LoadMarker loadMarker) {
-		viewDistance = Math.Max (viewDistance + 100, maxViewDistance);
-		var inViewDistance = localCenters.Where (p => loadMarker.Translation.DistanceTo (loadMarker.ToGlobal (p)) < viewDistance);
-		centerQueue = new ConcurrentQueue<GodotVector3> ();
-		foreach (var p in inViewDistance) {
-			positionsScreened++;
-			GodotVector3 pos = loadMarker.ToGlobal (p) / 8;
+	private void AddLoadMarker (LoadMarker loadMarker) {
+		for (int c = 0; c < localCenters.Count (); c++) {
+			GodotVector3 vector3 = localCenters[c];
+			GodotVector3 pos = loadMarker.ToGlobal (vector3) / 8;
 			int x = (int) pos.x;
 			int y = (int) pos.y;
 			int z = (int) pos.z;
 
 			if (x >= 0 && z >= 0 && y >= 0 && x * 8 <= octree.sizeX &&
 				y * 8 <= octree.sizeY && z * 8 <= octree.sizeZ) {
-				positionsInRange++;
-
 				if (terra.TraverseOctree (x, y, z, 0).chunk == null) {
-					positionsNeeded++;
 					centerQueue.Enqueue (pos);
 				}
-
 			}
 		}
-		_event.Set ();
 	}
 
 	public void Process () {
-		Stopwatch stopwatch = new Stopwatch ();
 		GodotVector3 pos;
 		while (runThread) {
-			_event.WaitOne ();
 			if (!centerQueue.IsEmpty) {
 				if (centerQueue.TryDequeue (out pos)) {
-					stopwatch.Restart ();
 					LoadArea ((int) pos.x, (int) pos.y, (int) pos.z);
-
 				}
-			} else {
-				_event.Reset ();
 			}
 		}
 	}
@@ -149,8 +111,8 @@ public class Foreman {
 	//Loads chunks
 	private void LoadArea (int x, int y, int z) {
 		//OctreeNode childNode = new OctreeNode();
-		if(chunksPlaced == 0){
-			stopwatch.Start();
+		if (chunksPlaced < 1) {
+			stopwatch.Start ();
 		}
 
 		Chunk chunk;
@@ -183,9 +145,9 @@ public class Foreman {
 			mesher.MeshChunk (chunk);
 		}
 
-		if(chunksPlaced == 500){
-			stopwatch.Stop();
-			Godot.GD.Print("500 chunks took " + stopwatch.ElapsedMilliseconds +" ms");
+		if (chunksPlaced >= 500) {
+			stopwatch.Stop ();
+			Godot.GD.Print (chunksPlaced + " chunks took " + stopwatch.ElapsedMilliseconds + " ms");
 		}
 	}
 
@@ -212,7 +174,7 @@ public class Foreman {
 
 		chunk.materials = 1;
 
-		uint[] voxels = new uint[Constants.CHUNK_SIZE3D];
+		uint[] voxels = ArrayPool<uint>.Shared.Rent (Constants.CHUNK_SIZE3D);
 
 		chunk.isEmpty = true;
 
@@ -275,12 +237,15 @@ public class Foreman {
 		if (chunk.isSurface) {
 			chunk.materials = 3;
 			chunk.voxels = new uint[lastPosition];
-			Array.ConstrainedCopy(voxels, 0, chunk.voxels, 0, lastPosition);
-		}else{
-			if(chunk.isEmpty){
-				chunk.voxels = new uint[1]{0};
-			}else{
-				chunk.voxels = new uint[1]{(uint)dirtID};
+			Array.ConstrainedCopy (voxels, 0, chunk.voxels, 0, lastPosition);
+			ArrayPool<uint>.Shared.Return (voxels);
+		} else {
+			if (chunk.isEmpty) {
+				chunk.voxels = new uint[1] { 0 };
+			} else {
+				chunk.voxels = new uint[1] {
+					(uint) dirtID
+				};
 			}
 		}
 		return chunk;
