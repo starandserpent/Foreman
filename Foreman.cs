@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
+using System.Numerics;
 using System.Threading;
 using GodotVector3 = Godot.Vector3;
 using System.Collections.Generic;
@@ -22,13 +23,10 @@ public class Foreman {
 	private int generationThreads;
 	private List<GodotVector3> localCenters;
 	private volatile bool runThread = true;
-	private ConcurrentQueue<Position> centerQueue;
 	private volatile List<long> chunkSpeed;
 	private Threading[] threads;
-	private volatile ManualResetEvent _event;
 	private volatile Godot.Spatial loadMarker = null;
-	private Thread GenerateThread;
-	private ConcurrentStack<ConcurrentQueue<Position>> stack;
+	private int location;
 	public volatile static int chunksLoaded = 0;
 	public volatile static int chunksPlaced = 0;
 	public volatile static int positionsScreened = 0;
@@ -44,17 +42,13 @@ public class Foreman {
 		int viewDistance, float fov, int generationThreads) {
 		this.weltschmerz = weltschmerz;
 		this.terra = terra;
-		stack = new ConcurrentStack<ConcurrentQueue<Position>> ();
 		lastTransform = Godot.Transform.Identity;
-		GenerateThread = new Threading (() => GenerateProcess ());
-		GenerateThread.Start ();
 		this.octree = terra.GetOctree ();
 		maxViewDistance = viewDistance;
 		this.fov = fov;
 		this.mesher = mesher;
 		this.generationThreads = generationThreads;
 		localCenters = new List<GodotVector3> ();
-		centerQueue = new ConcurrentQueue<Position> ();
 		chunkSpeed = new List<long> ();
 		threads = new Threading[generationThreads];
 		stopwatch = new Stopwatch ();
@@ -72,41 +66,6 @@ public class Foreman {
 				}
 			}
 		}
-		localCenters = localCenters.OrderBy (p => p.DistanceTo (GodotVector3.Zero)).ToList ();
-	}
-
-	private void GenerateProcess () {
-		bool done = false;
-		while (runThread) {
-			if (loadMarker != null && !done) {
-				for (int c = 0; c < localCenters.Count (); c++) {
-					if (lastTransform.Equals (loadMarker.GlobalTransform)) {
-						GodotVector3 vector3 = localCenters[c];
-						GodotVector3 pos = loadMarker.ToGlobal (vector3) / 8;
-						Position position = new Position ();
-						position.x = (int) pos.x;
-						position.y = (int) pos.y;
-						position.z = (int) pos.z;
-
-						centerQueue.Enqueue (position);
-					} else {
-						if (!centerQueue.IsEmpty) {
-							stack.Push (centerQueue);
-						}
-						centerQueue = new ConcurrentQueue<Position> ();
-						lastTransform = loadMarker.GlobalTransform;
-						break;
-					}
-				}
-				done = true;
-			}
-
-			if (done && lastTransform.Equals (loadMarker.GlobalTransform)) {
-				centerQueue = new ConcurrentQueue<Position> ();
-				lastTransform = loadMarker.GlobalTransform;
-				done = false;
-			}
-		}
 	}
 
 	public void AddLoadMarker (Godot.Spatial loadMarker) {
@@ -119,30 +78,34 @@ public class Foreman {
 	//Initial generation
 
 	public void Process () {
-		Position pos;
-		ConcurrentQueue<Position> queu;
+		Position pos = new Position ();
 		while (runThread) {
-			if (!centerQueue.IsEmpty && centerQueue.TryDequeue (out pos)) {
-				if (pos.x >= 0 && pos.z >= 0 && pos.y >= 0 && pos.x * 8 <= octree.sizeX &&
-					pos.y * 8 <= octree.sizeY && pos.z * 8 <= octree.sizeZ) {
-					if (terra.TraverseOctree (pos.x, pos.y, pos.z, 0).chunk == null) {
-						LoadArea (pos.x, pos.y, pos.z);
+			if (loadMarker != null) {
+				GodotVector3 position = new GodotVector3 ();
+				lock (this) {
+					if (!lastTransform.Equals (loadMarker.GlobalTransform)) {
+						location = 0;
+						lastTransform = loadMarker.GlobalTransform;
+						Threading.Sleep(10);
+					} else if (location < localCenters.Count) {
+						position = loadMarker.ToGlobal (localCenters[location]) / 8;
+						pos.x = (int) position.x;
+						pos.y = (int) position.y;
+						pos.z = (int) position.z;
+						location++;
+
+						OctreeNode node = terra.TraverseOctree (pos.x, pos.y, pos.z, 0);
+						if ( node != null && node.chunk !=null) {
+							pos.x = -1;
+						}
+					} else {
+						Threading.Sleep (10);
 					}
 				}
-			} else {
-				if (!stack.IsEmpty && stack.TryPop (out queu)) {
-					if (queu.TryDequeue (out pos)) {
-						if (pos.x >= 0 && pos.z >= 0 && pos.y >= 0 && pos.x * 8 <= octree.sizeX &&
-							pos.y * 8 <= octree.sizeY && pos.z * 8 <= octree.sizeZ) {
-							if (terra.TraverseOctree (pos.x, pos.y, pos.z, 0).chunk == null) {
-								LoadArea (pos.x, pos.y, pos.z);
-							}
-						}
-					}
 
-					if(!queu.IsEmpty){
-						stack.Push(queu);
-					}
+				if (pos.x >= 0 && pos.z >= 0 && pos.y >= 0 && pos.x * 8 <= octree.sizeX &&
+					pos.y * 8 <= octree.sizeY && pos.z * 8 <= octree.sizeZ) {
+					LoadArea (pos.x, pos.y, pos.z);
 				}
 			}
 		}
