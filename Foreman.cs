@@ -79,14 +79,13 @@ public class Foreman {
 		while (runThread) {
 			if (loadMarker != null && !done) {
 				for (int c = 0; c < localCenters.Count (); c++) {
-
-					GodotVector3 vector3 = localCenters[c];
-					GodotVector3 pos = loadMarker.ToGlobal (vector3) / 8;
-					int x = (int) pos.x;
-					int y = (int) pos.y;
-					int z = (int) pos.z;
-
 					if (lastTransform.Equals (loadMarker.GlobalTransform)) {
+						GodotVector3 vector3 = localCenters[c];
+						GodotVector3 pos = loadMarker.ToGlobal (vector3) / 8;
+						int x = (int) pos.x;
+						int y = (int) pos.y;
+						int z = (int) pos.z;
+
 						if (x >= 0 && z >= 0 && y >= 0 && x * 8 <= octree.sizeX &&
 							y * 8 <= octree.sizeY && z * 8 <= octree.sizeZ) {
 							if (terra.TraverseOctree (x, y, z, 0).chunk == null) {
