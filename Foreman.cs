@@ -72,7 +72,7 @@ public class Foreman {
 
 	public void GenerateTerrain (Godot.Spatial loadMarker) {
 		if (GenerateThread.IsAlive) {
-			GenerateThread.Join ();
+			GenerateThread.Abort ();
 		}
 
 		GenerateThread = new Threading (() => AddLoadMarker (loadMarker));
