@@ -26,7 +26,7 @@ public class Foreman {
 	private volatile List<long> chunkSpeed;
 	private Threading[] threads;
 	private volatile ManualResetEvent _event;
-	private LoadMarker marker = null;
+	private volatile Godot.Spatial loadMarker = null;
 	private Thread GenerateThread;
 	public volatile static int chunksLoaded = 0;
 	public volatile static int chunksPlaced = 0;
@@ -35,13 +35,17 @@ public class Foreman {
 
 	public volatile static int positionsNeeded = 0;
 
+	private Godot.Transform lastTransform;
+
 	private Stopwatch stopwatch;
 
 	public Foreman (Weltschmerz weltschmerz, Terra terra, Registry registry, GameMesher mesher,
 		int viewDistance, float fov, int generationThreads) {
 		this.weltschmerz = weltschmerz;
 		this.terra = terra;
-		GenerateThread = new Threading (() => AddLoadMarker (marker));
+		lastTransform = Godot.Transform.Identity;
+		GenerateThread = new Threading (() => GenerateProcess ());
+		GenerateThread.Start ();
 		_event = new ManualResetEvent (true);
 		this.octree = terra.GetOctree ();
 		maxViewDistance = viewDistance;
@@ -70,33 +74,50 @@ public class Foreman {
 		localCenters = localCenters.OrderBy (p => p.DistanceTo (GodotVector3.Zero)).ToList ();
 	}
 
-	public void GenerateTerrain (Godot.Spatial loadMarker) {
-		if (GenerateThread.IsAlive) {
-			GenerateThread.Abort ();
-		}
+	private void GenerateProcess () {
+		bool done = false;
+		while (runThread) {
+			if (loadMarker != null && !done) {
+				for (int c = 0; c < localCenters.Count (); c++) {
 
-		GenerateThread = new Threading (() => AddLoadMarker (loadMarker));
-		centerQueue = new ConcurrentQueue<GodotVector3> ();
-		GenerateThread.Start ();
-	}
+					GodotVector3 vector3 = localCenters[c];
+					GodotVector3 pos = loadMarker.ToGlobal (vector3) / 8;
+					int x = (int) pos.x;
+					int y = (int) pos.y;
+					int z = (int) pos.z;
 
-	//Initial generation
-	private void AddLoadMarker (Godot.Spatial loadMarker) {
-		for (int c = 0; c < localCenters.Count (); c++) {
-			GodotVector3 vector3 = localCenters[c];
-			GodotVector3 pos = loadMarker.ToGlobal (vector3) / 8;
-			int x = (int) pos.x;
-			int y = (int) pos.y;
-			int z = (int) pos.z;
-
-			if (x >= 0 && z >= 0 && y >= 0 && x * 8 <= octree.sizeX &&
-				y * 8 <= octree.sizeY && z * 8 <= octree.sizeZ) {
-				if (terra.TraverseOctree (x, y, z, 0).chunk == null) {
-					centerQueue.Enqueue (pos);
+					if (lastTransform.Equals (loadMarker.GlobalTransform)) {
+						if (x >= 0 && z >= 0 && y >= 0 && x * 8 <= octree.sizeX &&
+							y * 8 <= octree.sizeY && z * 8 <= octree.sizeZ) {
+							if (terra.TraverseOctree (x, y, z, 0).chunk == null) {
+								centerQueue.Enqueue (pos);
+							}
+						}
+					} else {
+						centerQueue = new ConcurrentQueue<GodotVector3> ();
+						lastTransform = loadMarker.GlobalTransform;
+						break;
+					}
 				}
+				done = true;
+			}
+
+			if (done && lastTransform != loadMarker.GlobalTransform) {
+				centerQueue = new ConcurrentQueue<GodotVector3> ();
+				lastTransform = loadMarker.GlobalTransform;
+				done = false;
 			}
 		}
 	}
+
+	public void AddLoadMarker (Godot.Spatial loadMarker) {
+		if (this.loadMarker == null) {
+			this.loadMarker = loadMarker;
+			this.lastTransform = loadMarker.GlobalTransform;
+		}
+	}
+
+	//Initial generation
 
 	public void Process () {
 		GodotVector3 pos;
@@ -150,7 +171,7 @@ public class Foreman {
 			stopwatch.Stop ();
 			Godot.GD.Print ("500 chunks took " + stopwatch.ElapsedMilliseconds + " ms");
 			chunksPlaced = 0;
-			stopwatch.Restart();
+			stopwatch.Restart ();
 		}
 	}
 
