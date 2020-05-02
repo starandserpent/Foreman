@@ -22,12 +22,13 @@ public class Foreman {
 	private int generationThreads;
 	private List<GodotVector3> localCenters;
 	private volatile bool runThread = true;
-	private ConcurrentQueue<GodotVector3> centerQueue;
+	private ConcurrentQueue<Position> centerQueue;
 	private volatile List<long> chunkSpeed;
 	private Threading[] threads;
 	private volatile ManualResetEvent _event;
 	private volatile Godot.Spatial loadMarker = null;
 	private Thread GenerateThread;
+	private ConcurrentStack<ConcurrentQueue<Position>> stack;
 	public volatile static int chunksLoaded = 0;
 	public volatile static int chunksPlaced = 0;
 	public volatile static int positionsScreened = 0;
@@ -43,17 +44,17 @@ public class Foreman {
 		int viewDistance, float fov, int generationThreads) {
 		this.weltschmerz = weltschmerz;
 		this.terra = terra;
+		stack = new ConcurrentStack<ConcurrentQueue<Position>> ();
 		lastTransform = Godot.Transform.Identity;
 		GenerateThread = new Threading (() => GenerateProcess ());
 		GenerateThread.Start ();
-		_event = new ManualResetEvent (true);
 		this.octree = terra.GetOctree ();
 		maxViewDistance = viewDistance;
 		this.fov = fov;
 		this.mesher = mesher;
 		this.generationThreads = generationThreads;
 		localCenters = new List<GodotVector3> ();
-		centerQueue = new ConcurrentQueue<GodotVector3> ();
+		centerQueue = new ConcurrentQueue<Position> ();
 		chunkSpeed = new List<long> ();
 		threads = new Threading[generationThreads];
 		stopwatch = new Stopwatch ();
@@ -82,18 +83,17 @@ public class Foreman {
 					if (lastTransform.Equals (loadMarker.GlobalTransform)) {
 						GodotVector3 vector3 = localCenters[c];
 						GodotVector3 pos = loadMarker.ToGlobal (vector3) / 8;
-						int x = (int) pos.x;
-						int y = (int) pos.y;
-						int z = (int) pos.z;
+						Position position = new Position ();
+						position.x = (int) pos.x;
+						position.y = (int) pos.y;
+						position.z = (int) pos.z;
 
-						if (x >= 0 && z >= 0 && y >= 0 && x * 8 <= octree.sizeX &&
-							y * 8 <= octree.sizeY && z * 8 <= octree.sizeZ) {
-							if (terra.TraverseOctree (x, y, z, 0).chunk == null) {
-								centerQueue.Enqueue (pos);
-							}
-						}
+						centerQueue.Enqueue (position);
 					} else {
-						centerQueue = new ConcurrentQueue<GodotVector3> ();
+						if (!centerQueue.IsEmpty) {
+							stack.Push (centerQueue);
+						}
+						centerQueue = new ConcurrentQueue<Position> ();
 						lastTransform = loadMarker.GlobalTransform;
 						break;
 					}
@@ -101,8 +101,8 @@ public class Foreman {
 				done = true;
 			}
 
-			if (done && lastTransform != loadMarker.GlobalTransform) {
-				centerQueue = new ConcurrentQueue<GodotVector3> ();
+			if (done && lastTransform.Equals (loadMarker.GlobalTransform)) {
+				centerQueue = new ConcurrentQueue<Position> ();
 				lastTransform = loadMarker.GlobalTransform;
 				done = false;
 			}
@@ -119,11 +119,30 @@ public class Foreman {
 	//Initial generation
 
 	public void Process () {
-		GodotVector3 pos;
+		Position pos;
+		ConcurrentQueue<Position> queu;
 		while (runThread) {
-			if (!centerQueue.IsEmpty) {
-				if (centerQueue.TryDequeue (out pos)) {
-					LoadArea ((int) pos.x, (int) pos.y, (int) pos.z);
+			if (!centerQueue.IsEmpty && centerQueue.TryDequeue (out pos)) {
+				if (pos.x >= 0 && pos.z >= 0 && pos.y >= 0 && pos.x * 8 <= octree.sizeX &&
+					pos.y * 8 <= octree.sizeY && pos.z * 8 <= octree.sizeZ) {
+					if (terra.TraverseOctree (pos.x, pos.y, pos.z, 0).chunk == null) {
+						LoadArea (pos.x, pos.y, pos.z);
+					}
+				}
+			} else {
+				if (!stack.IsEmpty && stack.TryPop (out queu)) {
+					if (queu.TryDequeue (out pos)) {
+						if (pos.x >= 0 && pos.z >= 0 && pos.y >= 0 && pos.x * 8 <= octree.sizeX &&
+							pos.y * 8 <= octree.sizeY && pos.z * 8 <= octree.sizeZ) {
+							if (terra.TraverseOctree (pos.x, pos.y, pos.z, 0).chunk == null) {
+								LoadArea (pos.x, pos.y, pos.z);
+							}
+						}
+					}
+
+					if(!queu.IsEmpty){
+						stack.Push(queu);
+					}
 				}
 			}
 		}
@@ -184,7 +203,6 @@ public class Foreman {
 		for (int t = 0; t < generationThreads; t++) {
 			threads[t].Abort ();
 		}
-
 		localCenters.Clear ();
 	}
 
