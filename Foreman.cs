@@ -70,17 +70,18 @@ public class Foreman {
 		localCenters = localCenters.OrderBy (p => p.DistanceTo (GodotVector3.Zero)).ToList ();
 	}
 
-	public void GenerateTerrain (LoadMarker loadMarker) {
+	public void GenerateTerrain (Godot.Spatial loadMarker) {
 		if (GenerateThread.IsAlive) {
 			GenerateThread.Join ();
 		}
+
 		GenerateThread = new Threading (() => AddLoadMarker (loadMarker));
 		centerQueue = new ConcurrentQueue<GodotVector3> ();
 		GenerateThread.Start ();
 	}
 
 	//Initial generation
-	private void AddLoadMarker (LoadMarker loadMarker) {
+	private void AddLoadMarker (Godot.Spatial loadMarker) {
 		for (int c = 0; c < localCenters.Count (); c++) {
 			GodotVector3 vector3 = localCenters[c];
 			GodotVector3 pos = loadMarker.ToGlobal (vector3) / 8;
@@ -147,7 +148,9 @@ public class Foreman {
 
 		if (chunksPlaced >= 500) {
 			stopwatch.Stop ();
-			Godot.GD.Print (chunksPlaced + " chunks took " + stopwatch.ElapsedMilliseconds + " ms");
+			Godot.GD.Print ("500 chunks took " + stopwatch.ElapsedMilliseconds + " ms");
+			chunksPlaced = 0;
+			stopwatch.Restart();
 		}
 	}
 
