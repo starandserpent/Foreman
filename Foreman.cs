@@ -80,21 +80,19 @@ public class Foreman {
 						location = 0;
 						lastTransform = loadMarker.GlobalTransform;
 					} else if (location < localCenters.Count) {
-						position = loadMarker.ToGlobal (localCenters[location]) / 8;
+						position = loadMarker.ToGlobal (localCenters[location])/8;
 						pos.x = (int) position.x;
 						pos.y = (int) position.y;
 						pos.z = (int) position.z;
 						location++;
 
 						OctreeNode node = terra.TraverseOctree (pos.x, pos.y, pos.z, 0);
-						if (node != null && node.chunk != null) {
-							pos.x = -1;
+						if (node == null || node.chunk != null) {
+							continue;
 						}
 					}
 				}
-
-				if (pos.x >= 0 && pos.z >= 0 && pos.y >= 0 && pos.x * 8 <= octree.sizeX &&
-					pos.y * 8 <= octree.sizeY && pos.z * 8 <= octree.sizeZ) {
+				if (terra.CheckBoundries (pos.x, pos.y, pos.z)) {
 					LoadArea (pos.x, pos.y, pos.z);
 				}
 			}
@@ -147,7 +145,7 @@ public class Foreman {
 	}
 
 	public void SetMaterials (Registry registry) {
-		chunkFiller = new ChunkFiller(registry.SelectByName ("dirt").worldID, registry.SelectByName ("grass").worldID);
+		chunkFiller = new ChunkFiller (registry.SelectByName ("dirt").worldID, registry.SelectByName ("grass").worldID);
 	}
 
 	public void Stop () {
