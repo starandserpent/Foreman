@@ -1,26 +1,19 @@
-using System.Buffers;
-using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Linq;
-using System.Numerics;
-using System.Threading;
 using GodotVector3 = Godot.Vector3;
 using System.Collections.Generic;
 using Threading = System.Threading.Thread;
-using System;
 
 public class Foreman {
 	//This is recommend max static octree size because it takes 134 MB
-	private volatile GameMesher mesher;
+	private volatile GodotMesher mesher;
 	private volatile Octree octree;
-	private volatile int dirtID;
-	private volatile int grassID;
 	private int grassMeshID;
 	private volatile Weltschmerz weltschmerz;
 	private volatile Terra terra;
 	private int maxViewDistance;
 	private float fov;
 	private int generationThreads;
+	private ChunkFiller chunkFiller;
 	private List<GodotVector3> localCenters;
 	private volatile bool runThread = true;
 	private volatile List<long> chunkSpeed;
@@ -38,7 +31,7 @@ public class Foreman {
 
 	private Stopwatch stopwatch;
 
-	public Foreman (Weltschmerz weltschmerz, Terra terra, Registry registry, GameMesher mesher,
+	public Foreman (Weltschmerz weltschmerz, Terra terra, Registry registry, GodotMesher mesher,
 		int viewDistance, float fov, int generationThreads) {
 		this.weltschmerz = weltschmerz;
 		this.terra = terra;
@@ -86,7 +79,6 @@ public class Foreman {
 					if (!lastTransform.Equals (loadMarker.GlobalTransform)) {
 						location = 0;
 						lastTransform = loadMarker.GlobalTransform;
-						Threading.Sleep(10);
 					} else if (location < localCenters.Count) {
 						position = loadMarker.ToGlobal (localCenters[location]) / 8;
 						pos.x = (int) position.x;
@@ -95,11 +87,9 @@ public class Foreman {
 						location++;
 
 						OctreeNode node = terra.TraverseOctree (pos.x, pos.y, pos.z, 0);
-						if ( node != null && node.chunk !=null) {
+						if (node != null && node.chunk != null) {
 							pos.x = -1;
 						}
-					} else {
-						Threading.Sleep (10);
 					}
 				}
 
@@ -126,7 +116,7 @@ public class Foreman {
 			chunk.y = (uint) y << Constants.CHUNK_EXPONENT;
 			chunk.z = (uint) z << Constants.CHUNK_EXPONENT;
 		} else {
-			chunk = GenerateChunk (x << Constants.CHUNK_EXPONENT, y << Constants.CHUNK_EXPONENT,
+			chunk = chunkFiller.GenerateChunk (x << Constants.CHUNK_EXPONENT, y << Constants.CHUNK_EXPONENT,
 				z << Constants.CHUNK_EXPONENT, weltschmerz);
 			if (!chunk.isSurface) {
 				/*
@@ -135,7 +125,7 @@ public class Foreman {
 				chunk.voxels[0] = (uint) childNode.materialID;
 				*/
 				var temp = chunk.voxels[0];
-				chunk.voxels = new uint[1];
+				chunk.voxels = new Run[1];
 				chunk.voxels[0] = temp;
 				chunk.x = (uint) x << Constants.CHUNK_EXPONENT;
 				chunk.y = (uint) y << Constants.CHUNK_EXPONENT;
@@ -157,8 +147,7 @@ public class Foreman {
 	}
 
 	public void SetMaterials (Registry registry) {
-		dirtID = registry.SelectByName ("dirt").worldID;
-		grassID = registry.SelectByName ("grass").worldID;
+		chunkFiller = new ChunkFiller(registry.SelectByName ("dirt").worldID, registry.SelectByName ("grass").worldID);
 	}
 
 	public void Stop () {
@@ -167,92 +156,6 @@ public class Foreman {
 			threads[t].Abort ();
 		}
 		localCenters.Clear ();
-	}
-
-	public Chunk GenerateChunk (float posX, float posY, float posZ, Weltschmerz weltschmerz) {
-		Chunk chunk = new Chunk ();
-
-		chunk.x = (uint) posX;
-		chunk.y = (uint) posY;
-		chunk.z = (uint) posZ;
-
-		chunk.materials = 1;
-
-		uint[] voxels = ArrayPool<uint>.Shared.Rent (Constants.CHUNK_SIZE3D);
-
-		chunk.isEmpty = true;
-
-		int posx = (int) (posX * 4);
-		int posz = (int) (posZ * 4);
-		int posy = (int) (posY * 4);
-
-		int lastPosition = 0;
-
-		chunk.isSurface = false;
-		for (int z = 0; z < Constants.CHUNK_SIZE1D; z++) {
-			for (int x = 0; x < Constants.CHUNK_SIZE1D; x++) {
-				int elevation = (int) weltschmerz.GetElevation (x + posx, z + posz);
-
-				if (elevation / Constants.CHUNK_SIZE1D == posy / Constants.CHUNK_SIZE1D) {
-					int elev = elevation % Constants.CHUNK_SIZE1D;
-					uint bitPos;
-					uint bitValue;
-					bitPos = (uint) elev << 8;
-					bitValue = (uint) dirtID;
-
-					voxels[lastPosition] = (bitPos | bitValue);
-
-					lastPosition++;
-
-					bitPos = (uint) 1 << 8;
-					bitValue = (uint) grassID;
-
-					voxels[lastPosition] = (bitPos | bitValue);
-
-					lastPosition++;
-					bitPos = (uint) (Constants.CHUNK_SIZE1D - elev - 1) << 8;
-					bitValue = (uint) 0;
-
-					voxels[lastPosition] = (bitPos | bitValue);
-
-					lastPosition++;
-
-					chunk.isSurface = true;
-					chunk.isEmpty = false;
-				} else if (elevation / Constants.CHUNK_SIZE1D > posy / Constants.CHUNK_SIZE1D) {
-					uint bitPos = (uint) (Constants.CHUNK_SIZE1D) << 8;
-					uint bitValue = (uint) dirtID;
-					chunk.isEmpty = false;
-
-					voxels[lastPosition] = (bitPos | bitValue);
-
-					lastPosition++;
-				} else if (elevation / Constants.CHUNK_SIZE1D < posy / Constants.CHUNK_SIZE1D) {
-					uint bitPos = (uint) (Constants.CHUNK_SIZE1D) << 8;
-					uint bitValue = (uint) 0;
-
-					voxels[lastPosition] = (bitPos | bitValue);
-
-					lastPosition++;
-				}
-			}
-		}
-
-		if (chunk.isSurface) {
-			chunk.materials = 3;
-			chunk.voxels = new uint[lastPosition];
-			Array.ConstrainedCopy (voxels, 0, chunk.voxels, 0, lastPosition);
-			ArrayPool<uint>.Shared.Return (voxels);
-		} else {
-			if (chunk.isEmpty) {
-				chunk.voxels = new uint[1] { 0 };
-			} else {
-				chunk.voxels = new uint[1] {
-					(uint) dirtID
-				};
-			}
-		}
-		return chunk;
 	}
 
 	public List<long> GetMeasures () {
