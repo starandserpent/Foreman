@@ -1,4 +1,7 @@
+using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Threading;
 using GodotVector3 = Godot.Vector3;
 using System.Collections.Generic;
 using Threading = System.Threading.Thread;
@@ -14,12 +17,12 @@ public class Foreman {
 	private float fov;
 	private int generationThreads;
 	private ChunkFiller chunkFiller;
-	private List<GodotVector3> localCenters;
+	private ConcurrentQueue<Position> queue;
+	private Position[] localCenters;
 	private volatile bool runThread = true;
 	private volatile List<long> chunkSpeed;
 	private Threading[] threads;
 	private volatile Godot.Spatial loadMarker = null;
-	private int location;
 	public volatile static int chunksLoaded = 0;
 	public volatile static int chunksPlaced = 0;
 	public volatile static int positionsScreened = 0;
@@ -30,6 +33,14 @@ public class Foreman {
 	private Godot.Transform lastTransform;
 
 	private Stopwatch stopwatch;
+	private SemaphoreSlim preparation;
+	private SemaphoreSlim generation;
+
+	private int Length = 0;
+
+	private int maxSize;
+
+	private Threading processThread;
 
 	public Foreman (Weltschmerz weltschmerz, Terra terra, Registry registry, GodotMesher mesher,
 		int viewDistance, float fov, int generationThreads) {
@@ -37,27 +48,46 @@ public class Foreman {
 		this.terra = terra;
 		lastTransform = Godot.Transform.Identity;
 		this.octree = terra.GetOctree ();
+		queue = new ConcurrentQueue<Position> ();
 		maxViewDistance = viewDistance;
 		this.fov = fov;
 		this.mesher = mesher;
 		this.generationThreads = generationThreads;
-		localCenters = new List<GodotVector3> ();
 		chunkSpeed = new List<long> ();
 		threads = new Threading[generationThreads];
 		stopwatch = new Stopwatch ();
 
-		for (int t = 0; t < generationThreads; t++) {
-			threads[t] = new Threading (() => Process ());
-			threads[t].Start ();
-		}
-
+		List<Position> localCenters = new List<Position> ();
 		for (int l = -maxViewDistance; l < maxViewDistance; l += 8) {
 			for (int y = -Utils.GetPosFromFOV (fov, l); y < Utils.GetPosFromFOV (fov, l); y += 8) {
 				for (int x = -Utils.GetPosFromFOV (fov, l); x < Utils.GetPosFromFOV (fov, l); x += 8) {
-					GodotVector3 center = new GodotVector3 (x, y, -l);
-					localCenters.Add (center);
+					localCenters.Add (new Position (x, y, -l));
 				}
 			}
+		}
+
+		this.localCenters = localCenters.ToArray ();
+		localCenters.Clear ();
+
+		maxSize = this.localCenters.Length;
+
+		this.preparation = new SemaphoreSlim (0, 3);
+		this.generation = new SemaphoreSlim (0, generationThreads);
+
+		for (int t = 0; t < generationThreads; t++) {
+			threads[t] = new Threading (() => Generate ());
+			threads[t].Start ();
+		}
+
+		processThread = new Threading (() => Process ());
+		processThread.Start ();
+	}
+
+	public void Release () {
+		queue = new ConcurrentQueue<Position> ();
+		Length = 0;
+		if (preparation.CurrentCount < 1) {
+			preparation.Release (1);
 		}
 	}
 
@@ -65,33 +95,49 @@ public class Foreman {
 		if (this.loadMarker == null) {
 			this.loadMarker = loadMarker;
 			this.lastTransform = loadMarker.GlobalTransform;
+			Release ();
 		}
 	}
 
 	//Initial generation
 
-	public void Process () {
-		Position pos = new Position ();
+	private void Process () {
 		while (runThread) {
-			if (loadMarker != null) {
-				GodotVector3 position = new GodotVector3 ();
+			preparation.Wait ();
+			if (Length < maxSize) {
+				Position pos = localCenters[Length];
+				GodotVector3 position = new GodotVector3 (pos.x, pos.y, pos.z);
 				lock (this) {
-					if (!lastTransform.Equals (loadMarker.GlobalTransform)) {
-						location = 0;
-						lastTransform = loadMarker.GlobalTransform;
-					} else if (location < localCenters.Count) {
-						position = loadMarker.ToGlobal (localCenters[location])/8;
-						pos.x = (int) position.x;
-						pos.y = (int) position.y;
-						pos.z = (int) position.z;
-						location++;
-
-						OctreeNode node = terra.TraverseOctree (pos.x, pos.y, pos.z, 0);
-						if (node == null || node.chunk != null) {
-							continue;
-						}
+					position = loadMarker.ToGlobal (position) / 8;
+				}
+				pos.x = (int) position.x;
+				pos.y = (int) position.y;
+				pos.z = (int) position.z;
+				OctreeNode node;
+				lock (this) {
+					node = terra.TraverseOctree (pos.x, pos.y, pos.z, 0);
+				}
+				if (node != null && node.chunk == null) {
+					queue.Enqueue (pos);
+					if (generation.CurrentCount < generationThreads) {
+						generation.Release (1);
 					}
 				}
+
+				if (preparation.CurrentCount < 1) {
+					preparation.Release (1);
+				}
+
+				Length++;
+			}
+		}
+	}
+
+	public void Generate () {
+		while (runThread) {
+			generation.Wait ();
+			Position pos;
+			if (queue.TryDequeue (out pos)) {
 				if (terra.CheckBoundries (pos.x, pos.y, pos.z)) {
 					LoadArea (pos.x, pos.y, pos.z);
 				}
@@ -128,9 +174,10 @@ public class Foreman {
 				chunk.x = (uint) x << Constants.CHUNK_EXPONENT;
 				chunk.y = (uint) y << Constants.CHUNK_EXPONENT;
 				chunk.z = (uint) z << Constants.CHUNK_EXPONENT;
+			} else {
+				chunksPlaced++;
 			}
 		}
-		chunksPlaced++;
 		terra.PlaceChunk (x, y, z, chunk);
 		if (!chunk.isEmpty) {
 			mesher.MeshChunk (chunk);
@@ -150,10 +197,6 @@ public class Foreman {
 
 	public void Stop () {
 		runThread = false;
-		for (int t = 0; t < generationThreads; t++) {
-			threads[t].Abort ();
-		}
-		localCenters.Clear ();
 	}
 
 	public List<long> GetMeasures () {
