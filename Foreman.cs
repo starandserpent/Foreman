@@ -159,31 +159,18 @@ public class Foreman {
 			chunk = chunkFiller.GenerateChunk (x << Constants.CHUNK_EXPONENT, y << Constants.CHUNK_EXPONENT,
 				z << Constants.CHUNK_EXPONENT, weltschmerz);
 			if (!chunk.isSurface) {
-				/*
-				childNode.materialID = (int) chunk.voxels[0];
-				chunk.voxels = new uint[1];
-				chunk.voxels[0] = (uint) childNode.materialID;
-				*/
 				var temp = chunk.voxels[0];
 				chunk.voxels = new Run[1];
 				chunk.voxels[0] = temp;
 				chunk.x = (uint) x << Constants.CHUNK_EXPONENT;
 				chunk.y = (uint) y << Constants.CHUNK_EXPONENT;
 				chunk.z = (uint) z << Constants.CHUNK_EXPONENT;
-			} else {
-				chunksPlaced++;
 			}
 		}
 		terra.PlaceChunk (x, y, z, chunk);
 		if (!chunk.isEmpty) {
 			mesher.MeshChunk (chunk);
-		}
-
-		if (chunksPlaced >= 500) {
-			stopwatch.Stop ();
-			Godot.GD.Print ("500 chunks took " + stopwatch.ElapsedMilliseconds + " ms");
-			chunksPlaced = 0;
-			stopwatch.Restart ();
+			chunksPlaced++;
 		}
 	}
 
