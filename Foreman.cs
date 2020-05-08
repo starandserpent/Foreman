@@ -107,16 +107,12 @@ public class Foreman {
 			if (Length < maxSize) {
 				Position pos = localCenters[Length];
 				GodotVector3 position = new GodotVector3 (pos.x, pos.y, pos.z);
-				lock (this) {
-					position = loadMarker.ToGlobal (position) / 8;
-				}
+				position = loadMarker.ToGlobal (position) / 8;
 				pos.x = (int) position.x;
 				pos.y = (int) position.y;
 				pos.z = (int) position.z;
 				OctreeNode node;
-				lock (this) {
-					node = terra.TraverseOctree (pos.x, pos.y, pos.z, 0);
-				}
+				node = terra.TraverseOctree (pos.x, pos.y, pos.z, 0);
 				if (node != null && node.chunk == null) {
 					queue.Enqueue (pos);
 					if (generation.CurrentCount < generationThreads) {
