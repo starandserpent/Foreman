@@ -169,7 +169,11 @@ public class Foreman {
 		}
 		terra.PlaceChunk (x, y, z, chunk);
 		if (!chunk.isEmpty) {
+			Stopwatch stopwatch = new Stopwatch();
+			stopwatch.Start();
 			mesher.MeshChunk (chunk);
+			stopwatch.Stop();
+			Godot.GD.Print("chunk meshed in " + stopwatch.ElapsedMilliseconds);
 			chunksPlaced++;
 		}
 	}
