@@ -10,16 +10,17 @@ public class ChunkFiller {
     }
     public Chunk GenerateChunk (float posX, float posY, float posZ, Weltschmerz weltschmerz) {
         Chunk chunk = new Chunk ();
+        chunk.Borders = new int[384];
 
         chunk.x = (uint) posX;
         chunk.y = (uint) posY;
         chunk.z = (uint) posZ;
 
-        chunk.materials = 1;
+        chunk.Materials = 1;
 
         Stack<Run> voxels = new Stack<Run> (Constants.CHUNK_SIZE3D);
 
-        chunk.isEmpty = true;
+        chunk.IsEmpty = true;
 
         int posx = (int) (posX * 4);
         int posz = (int) (posZ * 4);
@@ -27,7 +28,7 @@ public class ChunkFiller {
 
         Run run = new Run ();
 
-        chunk.isSurface = false;
+        chunk.IsSurface = false;
         for (int z = 0; z < Constants.CHUNK_SIZE1D; z++) {
             for (int x = 0; x < Constants.CHUNK_SIZE1D; x++) {
                 int elevation = (int) weltschmerz.GetElevation (x + posx, z + posz);
@@ -68,8 +69,8 @@ public class ChunkFiller {
 
                         voxels.Push (run);
 
-                        chunk.isSurface = true;
-                        chunk.isEmpty = false;
+                        chunk.IsSurface = true;
+                        chunk.IsEmpty = false;
                     } else {
                         int position = Constants.CHUNK_SIZE1D;
                         if (voxels.Count > 0) {
@@ -110,7 +111,7 @@ public class ChunkFiller {
 
                     voxels.Push (run);
 
-                    chunk.isEmpty = false;
+                    chunk.IsEmpty = false;
 
                 } else if (elevation / Constants.CHUNK_SIZE1D < posy / Constants.CHUNK_SIZE1D) {
 
@@ -137,17 +138,17 @@ public class ChunkFiller {
             }
         }
 
-        if (chunk.isSurface) {
-            chunk.materials = 3;
-            chunk.voxels = voxels.ToArray ();
+        if (chunk.IsSurface) {
+            chunk.Materials = 3;
+            chunk.Voxels = voxels.ToArray ();
         } else {
             run = new Run ();
-            if (chunk.isEmpty) {
+            if (chunk.IsEmpty) {
                 run.value = 0;
-                chunk.voxels = new Run[1] { run };
+                chunk.Voxels = new Run[1] { run };
             } else {
                 run.value = dirtID;
-                chunk.voxels = new Run[1] { run };
+                chunk.Voxels = new Run[1] { run };
             }
         }
 

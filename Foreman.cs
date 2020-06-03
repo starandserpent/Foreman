@@ -10,7 +10,7 @@ public class Foreman {
 	//This is recommend max static octree size because it takes 134 MB
 	private volatile GodotMesher mesher;
 	private volatile Octree octree;
-	private int grassMeshID;
+	//private int grassMeshID;
 	private volatile Weltschmerz weltschmerz;
 	private volatile Terra terra;
 	private int maxViewDistance;
@@ -151,29 +151,25 @@ public class Foreman {
 		Chunk chunk;
 		if (y << Constants.CHUNK_EXPONENT > weltschmerz.GetConfig ().elevation.max_elevation) {
 			chunk = new Chunk ();
-			chunk.isEmpty = true;
+			chunk.IsEmpty = true;
 			chunk.x = (uint) x << Constants.CHUNK_EXPONENT;
 			chunk.y = (uint) y << Constants.CHUNK_EXPONENT;
 			chunk.z = (uint) z << Constants.CHUNK_EXPONENT;
 		} else {
 			chunk = chunkFiller.GenerateChunk (x << Constants.CHUNK_EXPONENT, y << Constants.CHUNK_EXPONENT,
 				z << Constants.CHUNK_EXPONENT, weltschmerz);
-			if (!chunk.isSurface) {
-				var temp = chunk.voxels[0];
-				chunk.voxels = new Run[1];
-				chunk.voxels[0] = temp;
+			if (!chunk.IsSurface) {
+				var temp = chunk.Voxels[0];
+				chunk.Voxels = new Run[1];
+				chunk.Voxels[0] = temp;
 				chunk.x = (uint) x << Constants.CHUNK_EXPONENT;
 				chunk.y = (uint) y << Constants.CHUNK_EXPONENT;
 				chunk.z = (uint) z << Constants.CHUNK_EXPONENT;
 			}
 		}
 		terra.PlaceChunk (x, y, z, chunk);
-		if (!chunk.isEmpty) {
-			Stopwatch stopwatch = new Stopwatch();
-			stopwatch.Start();
+		if (!chunk.IsEmpty) {
 			mesher.MeshChunk (chunk);
-			stopwatch.Stop();
-			Godot.GD.Print("chunk meshed in " + stopwatch.ElapsedMilliseconds);
 			chunksPlaced++;
 		}
 	}
