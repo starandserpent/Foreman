@@ -1,12 +1,10 @@
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Threading;
 using GodotVector3 = Godot.Vector3;
 using System.Collections.Generic;
-using Threading = System.Threading.Thread;
-
-public class Foreman {
+using Godot;
+public class Foreman : Spatial {
 	//This is recommend max static octree size because it takes 134 MB
 	private volatile GodotMesher mesher;
 	private volatile Octree octree;
@@ -21,7 +19,7 @@ public class Foreman {
 	private Position[] localCenters;
 	private volatile bool runThread = true;
 	private volatile List<long> chunkSpeed;
-	private Threading[] threads;
+	private Thread[] threads;
 	private volatile Godot.Spatial loadMarker = null;
 	public volatile static int chunksLoaded = 0;
 	public volatile static int chunksPlaced = 0;
@@ -33,14 +31,14 @@ public class Foreman {
 	private Godot.Transform lastTransform;
 
 	private Stopwatch stopwatch;
-	private SemaphoreSlim preparation;
-	private SemaphoreSlim generation;
+	private Semaphore preparation;
+	private Semaphore generation;
 
 	private int Length = 0;
 
 	private int maxSize;
 
-	private Threading processThread;
+	private Thread processThread;
 
 	public Foreman (Weltschmerz weltschmerz, Terra terra, Registry registry, GodotMesher mesher,
 		int viewDistance, float fov, int generationThreads) {
@@ -54,7 +52,7 @@ public class Foreman {
 		this.mesher = mesher;
 		this.generationThreads = generationThreads;
 		chunkSpeed = new List<long> ();
-		threads = new Threading[generationThreads];
+		threads = new Thread[generationThreads];
 		stopwatch = new Stopwatch ();
 
 		List<Position> localCenters = new List<Position> ();
@@ -71,24 +69,22 @@ public class Foreman {
 
 		maxSize = this.localCenters.Length;
 
-		this.preparation = new SemaphoreSlim (0, 3);
-		this.generation = new SemaphoreSlim (0, generationThreads);
+		this.preparation = new Semaphore ();
+		this.generation = new Semaphore ();
 
 		for (int t = 0; t < generationThreads; t++) {
-			threads[t] = new Threading (() => Generate ());
-			threads[t].Start ();
+			threads[t] = new Thread ();
+			threads[t].Start (this, nameof (Generate), Thread.Priority.High);
 		}
 
-		processThread = new Threading (() => Process ());
-		processThread.Start ();
+		processThread = new Thread ();
+		processThread.Start (this, nameof (Process), Thread.Priority.High);
 	}
 
 	public void Release () {
 		queue = new ConcurrentQueue<Position> ();
 		Length = 0;
-		if (preparation.CurrentCount < 1) {
-			preparation.Release (1);
-		}
+		preparation.Post ();
 	}
 
 	public void AddLoadMarker (Godot.Spatial loadMarker) {
@@ -101,7 +97,7 @@ public class Foreman {
 
 	//Initial generation
 
-	private void Process () {
+	private void Process (Object lol) {
 		while (runThread) {
 			preparation.Wait ();
 			if (Length < maxSize) {
@@ -115,22 +111,18 @@ public class Foreman {
 				node = terra.TraverseOctree (pos.x, pos.y, pos.z, 0);
 				if (node != null && node.chunk == null) {
 					queue.Enqueue (pos);
-					if (generation.CurrentCount < generationThreads) {
-						generation.Release (1);
-					}
+					generation.Post();
 				}
 
-				if (preparation.CurrentCount < 1) {
-					preparation.Release (1);
-				}
+				preparation.Post ();
 
 				Length++;
 			}
 		}
 	}
 
-	public void Generate () {
-		ArrayPool<Position> pool = ArrayPool<Position>.Create(Constants.CHUNK_SIZE3D * 4 * 6, 1);
+	public void Generate (Object lol) {
+		ArrayPool<Position> pool = ArrayPool<Position>.Create (Constants.CHUNK_SIZE3D * 4 * 6, 1);
 		while (runThread) {
 			generation.Wait ();
 			Position pos;
