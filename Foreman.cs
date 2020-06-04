@@ -1,4 +1,4 @@
-using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading;
@@ -130,19 +130,20 @@ public class Foreman {
 	}
 
 	public void Generate () {
+		ArrayPool<Position> pool = ArrayPool<Position>.Create(Constants.CHUNK_SIZE3D * 4 * 6, 1);
 		while (runThread) {
 			generation.Wait ();
 			Position pos;
 			if (queue.TryDequeue (out pos)) {
 				if (terra.CheckBoundries (pos.x, pos.y, pos.z)) {
-					LoadArea (pos.x, pos.y, pos.z);
+					LoadArea (pos.x, pos.y, pos.z, pool);
 				}
 			}
 		}
 	}
 
 	//Loads chunks
-	private void LoadArea (int x, int y, int z) {
+	private void LoadArea (int x, int y, int z, ArrayPool<Position> pool) {
 		//OctreeNode childNode = new OctreeNode();
 		if (chunksPlaced < 1) {
 			stopwatch.Start ();
@@ -169,7 +170,7 @@ public class Foreman {
 		}
 		terra.PlaceChunk (x, y, z, chunk);
 		if (!chunk.IsEmpty) {
-			mesher.MeshChunk (chunk);
+			mesher.MeshChunk (chunk, pool);
 			chunksPlaced++;
 		}
 	}
