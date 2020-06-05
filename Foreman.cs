@@ -1,10 +1,10 @@
+using System;
 using System.Buffers;
 using System.Collections.Concurrent;
-using System.Diagnostics;
-using GodotVector3 = Godot.Vector3;
 using System.Collections.Generic;
+using System.Diagnostics;
 using Godot;
-public class Foreman : Spatial {
+public class Foreman {
 	//This is recommend max static octree size because it takes 134 MB
 	private volatile GodotMesher mesher;
 	private volatile Octree octree;
@@ -13,13 +13,11 @@ public class Foreman : Spatial {
 	private volatile Terra terra;
 	private int maxViewDistance;
 	private float fov;
-	private int generationThreads;
 	private ChunkFiller chunkFiller;
-	private ConcurrentQueue<Position> queue;
+	private ConcurrentQueue<Tuple<int, int, int>> queue;
 	private Position[] localCenters;
 	private volatile bool runThread = true;
 	private volatile List<long> chunkSpeed;
-	private Thread[] threads;
 	private volatile Godot.Spatial loadMarker = null;
 	public volatile static int chunksLoaded = 0;
 	public volatile static int chunksPlaced = 0;
@@ -28,7 +26,7 @@ public class Foreman : Spatial {
 
 	public volatile static int positionsNeeded = 0;
 
-	private Godot.Transform lastTransform;
+	private ConcurrentDictionary<Tuple<int, int, int>, OctreeNode> leafOctants;
 
 	private Stopwatch stopwatch;
 	private Semaphore preparation;
@@ -38,22 +36,24 @@ public class Foreman : Spatial {
 
 	private int maxSize;
 
-	private Thread processThread;
+	private TerraVector3[] basis;
+	private TerraVector3 origin;
+
+	private int generationThreads;
 
 	public Foreman (Weltschmerz weltschmerz, Terra terra, Registry registry, GodotMesher mesher,
 		int viewDistance, float fov, int generationThreads) {
+		this.generationThreads = generationThreads;
 		this.weltschmerz = weltschmerz;
 		this.terra = terra;
-		lastTransform = Godot.Transform.Identity;
 		this.octree = terra.GetOctree ();
-		queue = new ConcurrentQueue<Position> ();
+		queue = new ConcurrentQueue<Tuple<int, int, int>> ();
 		maxViewDistance = viewDistance;
 		this.fov = fov;
 		this.mesher = mesher;
-		this.generationThreads = generationThreads;
 		chunkSpeed = new List<long> ();
-		threads = new Thread[generationThreads];
 		stopwatch = new Stopwatch ();
+		this.leafOctants = new ConcurrentDictionary<Tuple<int, int, int>, OctreeNode> ();
 
 		List<Position> localCenters = new List<Position> ();
 		for (int l = -maxViewDistance; l < maxViewDistance; l += 8) {
@@ -71,47 +71,70 @@ public class Foreman : Spatial {
 
 		this.preparation = new Semaphore ();
 		this.generation = new Semaphore ();
-
-		for (int t = 0; t < generationThreads; t++) {
-			threads[t] = new Thread ();
-			threads[t].Start (this, nameof (Generate), Thread.Priority.High);
-		}
-
-		processThread = new Thread ();
-		processThread.Start (this, nameof (Process), Thread.Priority.High);
 	}
 
 	public void Release () {
-		queue = new ConcurrentQueue<Position> ();
+		basis = new TerraVector3[3];
+
+		queue = new ConcurrentQueue<Tuple<int, int, int>> ();
 		Length = 0;
-		preparation.Post ();
+
+		for (int i = 0; i < generationThreads; i++) {
+			preparation.Post ();
+		}
+
+		origin = new TerraVector3 (loadMarker.Transform.origin.x, loadMarker.Transform.origin.y, loadMarker.Transform.origin.z);
+
+		basis[0] = new TerraVector3 (loadMarker.Transform.basis[0].x, loadMarker.Transform.basis[0].y, loadMarker.Transform.basis[0].z);
+		basis[1] = new TerraVector3 (loadMarker.Transform.basis[1].x, loadMarker.Transform.basis[1].y, loadMarker.Transform.basis[1].z);
+		basis[2] = new TerraVector3 (loadMarker.Transform.basis[2].x, loadMarker.Transform.basis[2].y, loadMarker.Transform.basis[2].z);
 	}
 
-	public void AddLoadMarker (Godot.Spatial loadMarker) {
+	public void AddLoadMarker (Spatial loadMarker) {
 		if (this.loadMarker == null) {
 			this.loadMarker = loadMarker;
-			this.lastTransform = loadMarker.GlobalTransform;
 			Release ();
 		}
 	}
 
 	//Initial generation
 
-	private void Process (Object lol) {
+	public void Process () {
 		while (runThread) {
 			preparation.Wait ();
 			if (Length < maxSize) {
+
 				Position pos = localCenters[Length];
-				GodotVector3 position = new GodotVector3 (pos.x, pos.y, pos.z);
-				position = loadMarker.ToGlobal (position) / 8;
+
+				Godot.Vector3 lol = new Godot.Vector3 (pos.x, pos.y, pos.z);
+
+				/*	Godot.Vector3 position = new Godot.Vector3 (
+						(basis[0].x * lol.x + basis[0].y * lol.y + basis[0].z * lol.z) + origin.x,
+						(basis[1].x * lol.x + basis[1].y * lol.y + basis[1].z * lol.z) + origin.y,
+						(basis[2].x * lol.x + basis[2].y * lol.y + basis[2].z * lol.z) + origin.z) / 8;
+					//origin = ToGlobal (origin, basis, pos) / 8;*/
+				Godot.Vector3 position = new Godot.Vector3 ();
+
+				lock (this) {
+					position = loadMarker.ToGlobal (lol) / 8;
+				}
+
 				pos.x = (int) position.x;
 				pos.y = (int) position.y;
 				pos.z = (int) position.z;
-				OctreeNode node;
-				node = terra.TraverseOctree (pos.x, pos.y, pos.z, 0);
-				if (node != null && node.chunk == null) {
-					queue.Enqueue (pos);
-					generation.Post();
+
+				Tuple<int, int, int> key = new Tuple<int, int, int> (pos.x, pos.y, pos.z);
+				OctreeNode node = null;
+				if (!leafOctants.ContainsKey (key) || leafOctants.TryGetValue (key, out node)) {
+					if (node == null) {
+						node = terra.TraverseOctree (pos.x, pos.y, pos.z, 0);
+					}
+
+					if (node != null && node.chunk == null) {
+						leafOctants.TryAdd (key, node);
+						queue.Enqueue (key);
+						generation.Post ();
+					}
 				}
 
 				preparation.Post ();
@@ -121,50 +144,49 @@ public class Foreman : Spatial {
 		}
 	}
 
-	public void Generate (Object lol) {
+	public void Generate () {
 		ArrayPool<Position> pool = ArrayPool<Position>.Create (Constants.CHUNK_SIZE3D * 4 * 6, 1);
 		while (runThread) {
 			generation.Wait ();
-			Position pos;
+			Tuple<int, int, int> pos;
+			OctreeNode node;
 			if (queue.TryDequeue (out pos)) {
-				if (terra.CheckBoundries (pos.x, pos.y, pos.z)) {
-					LoadArea (pos.x, pos.y, pos.z, pool);
+				if (terra.CheckBoundries (pos.Item1, pos.Item2, pos.Item3) && leafOctants.TryGetValue (pos, out node)) {
+					LoadArea (pos, node, pool);
 				}
 			}
 		}
 	}
 
 	//Loads chunks
-	private void LoadArea (int x, int y, int z, ArrayPool<Position> pool) {
-		//OctreeNode childNode = new OctreeNode();
-		if (chunksPlaced < 1) {
-			stopwatch.Start ();
-		}
+	private void LoadArea (Tuple<int, int, int> pos, OctreeNode node, ArrayPool<Position> pool) {
 
 		Chunk chunk;
-		if (y << Constants.CHUNK_EXPONENT > weltschmerz.GetConfig ().elevation.max_elevation) {
+		if (pos.Item2 << Constants.CHUNK_EXPONENT > weltschmerz.GetConfig ().elevation.max_elevation) {
 			chunk = new Chunk ();
 			chunk.IsEmpty = true;
-			chunk.x = (uint) x << Constants.CHUNK_EXPONENT;
-			chunk.y = (uint) y << Constants.CHUNK_EXPONENT;
-			chunk.z = (uint) z << Constants.CHUNK_EXPONENT;
+			chunk.x = (uint) pos.Item1 << Constants.CHUNK_EXPONENT;
+			chunk.y = (uint) pos.Item2 << Constants.CHUNK_EXPONENT;
+			chunk.z = (uint) pos.Item3 << Constants.CHUNK_EXPONENT;
 		} else {
-			chunk = chunkFiller.GenerateChunk (x << Constants.CHUNK_EXPONENT, y << Constants.CHUNK_EXPONENT,
-				z << Constants.CHUNK_EXPONENT, weltschmerz);
+			chunk = chunkFiller.GenerateChunk (pos.Item1 << Constants.CHUNK_EXPONENT, pos.Item2 << Constants.CHUNK_EXPONENT,
+				pos.Item3 << Constants.CHUNK_EXPONENT, weltschmerz);
 			if (!chunk.IsSurface) {
 				var temp = chunk.Voxels[0];
 				chunk.Voxels = new Run[1];
 				chunk.Voxels[0] = temp;
-				chunk.x = (uint) x << Constants.CHUNK_EXPONENT;
-				chunk.y = (uint) y << Constants.CHUNK_EXPONENT;
-				chunk.z = (uint) z << Constants.CHUNK_EXPONENT;
+				chunk.x = (uint) pos.Item1 << Constants.CHUNK_EXPONENT;
+				chunk.y = (uint) pos.Item2 << Constants.CHUNK_EXPONENT;
+				chunk.z = (uint) pos.Item3 << Constants.CHUNK_EXPONENT;
 			}
 		}
-		terra.PlaceChunk (x, y, z, chunk);
+
 		if (!chunk.IsEmpty) {
 			mesher.MeshChunk (chunk, pool);
 			chunksPlaced++;
 		}
+
+		node.chunk = chunk;
 	}
 
 	public void SetMaterials (Registry registry) {
@@ -173,6 +195,14 @@ public class Foreman : Spatial {
 
 	public void Stop () {
 		runThread = false;
+	}
+
+	private TerraVector3 ToGlobal (TerraVector3 origin, TerraVector3[] basis, Position coords) {
+		TerraVector3 pos = new TerraVector3 ();
+		pos.x = (int) (basis[0].Dot (coords) + origin.x);
+		pos.y = (int) (basis[1].Dot (coords) + origin.y);
+		pos.z = (int) (basis[2].Dot (coords) + origin.z);
+		return pos;
 	}
 
 	public List<long> GetMeasures () {
