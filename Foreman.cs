@@ -3,10 +3,9 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
-using Godot;
 public class Foreman {
 	//This is recommend max static octree size because it takes 134 MB
-	private volatile GodotMesher mesher;
+	private volatile ITerraMesher mesher;
 	private volatile Octree octree;
 	//private int grassMeshID;
 	private volatile Weltschmerz weltschmerz;
@@ -18,7 +17,7 @@ public class Foreman {
 	private Position[] localCenters;
 	private volatile bool runThread = true;
 	private volatile List<long> chunkSpeed;
-	private volatile Godot.Spatial loadMarker = null;
+	private volatile LoadMarker loadMarker = null;
 	public volatile static int chunksLoaded = 0;
 	public volatile static int chunksPlaced = 0;
 	public volatile static int positionsScreened = 0;
@@ -29,19 +28,16 @@ public class Foreman {
 	private ConcurrentDictionary<Tuple<int, int, int>, OctreeNode> leafOctants;
 
 	private Stopwatch stopwatch;
-	private Semaphore preparation;
-	private Semaphore generation;
+	private ITerraSemaphore preparation;
+	private ITerraSemaphore generation;
 
 	private int Length = 0;
 
 	private int maxSize;
 
-	private TerraVector3[] basis;
-	private TerraVector3 origin;
-
 	private int generationThreads;
 
-	public Foreman (Weltschmerz weltschmerz, Terra terra, Registry registry, GodotMesher mesher,
+	public Foreman (Weltschmerz weltschmerz, Terra terra, Registry registry, ITerraMesher mesher,
 		int viewDistance, float fov, int generationThreads) {
 		this.generationThreads = generationThreads;
 		this.weltschmerz = weltschmerz;
@@ -68,29 +64,21 @@ public class Foreman {
 		localCenters.Clear ();
 
 		maxSize = this.localCenters.Length;
-
-		this.preparation = new Semaphore ();
-		this.generation = new Semaphore ();
 	}
 
 	public void Release () {
-		basis = new TerraVector3[3];
-
 		queue = new ConcurrentQueue<Tuple<int, int, int>> ();
 		Length = 0;
 
 		for (int i = 0; i < generationThreads; i++) {
 			preparation.Post ();
 		}
-
-		origin = new TerraVector3 (loadMarker.Transform.origin.x, loadMarker.Transform.origin.y, loadMarker.Transform.origin.z);
-
-		basis[0] = new TerraVector3 (loadMarker.Transform.basis[0].x, loadMarker.Transform.basis[0].y, loadMarker.Transform.basis[0].z);
-		basis[1] = new TerraVector3 (loadMarker.Transform.basis[1].x, loadMarker.Transform.basis[1].y, loadMarker.Transform.basis[1].z);
-		basis[2] = new TerraVector3 (loadMarker.Transform.basis[2].x, loadMarker.Transform.basis[2].y, loadMarker.Transform.basis[2].z);
 	}
 
-	public void AddLoadMarker (Spatial loadMarker) {
+	public void AddLoadMarker (LoadMarker loadMarker, ITerraSemaphore preparation, ITerraSemaphore generation) {
+	
+		this.preparation = preparation;
+		this.generation = generation;
 		if (this.loadMarker == null) {
 			this.loadMarker = loadMarker;
 			Release ();
@@ -105,23 +93,7 @@ public class Foreman {
 			if (Length < maxSize) {
 
 				Position pos = localCenters[Length];
-
-				Godot.Vector3 lol = new Godot.Vector3 (pos.x, pos.y, pos.z);
-
-				/*	Godot.Vector3 position = new Godot.Vector3 (
-						(basis[0].x * lol.x + basis[0].y * lol.y + basis[0].z * lol.z) + origin.x,
-						(basis[1].x * lol.x + basis[1].y * lol.y + basis[1].z * lol.z) + origin.y,
-						(basis[2].x * lol.x + basis[2].y * lol.y + basis[2].z * lol.z) + origin.z) / 8;
-					//origin = ToGlobal (origin, basis, pos) / 8;*/
-				Godot.Vector3 position = new Godot.Vector3 ();
-
-				lock (this) {
-					position = loadMarker.ToGlobal (lol) / 8;
-				}
-
-				pos.x = (int) position.x;
-				pos.y = (int) position.y;
-				pos.z = (int) position.z;
+				pos =  loadMarker.ToGlobal(pos) / 8;
 
 				Tuple<int, int, int> key = new Tuple<int, int, int> (pos.x, pos.y, pos.z);
 				OctreeNode node = null;
@@ -195,14 +167,6 @@ public class Foreman {
 
 	public void Stop () {
 		runThread = false;
-	}
-
-	private TerraVector3 ToGlobal (TerraVector3 origin, TerraVector3[] basis, Position coords) {
-		TerraVector3 pos = new TerraVector3 ();
-		pos.x = (int) (basis[0].Dot (coords) + origin.x);
-		pos.y = (int) (basis[1].Dot (coords) + origin.y);
-		pos.z = (int) (basis[2].Dot (coords) + origin.z);
-		return pos;
 	}
 
 	public List<long> GetMeasures () {
