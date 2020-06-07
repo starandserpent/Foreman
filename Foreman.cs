@@ -35,11 +35,13 @@ public class Foreman {
 
 	private int maxSize;
 
-	private int generationThreads;
+	private int preparationThreads;
 
 	public Foreman (Weltschmerz weltschmerz, Terra terra, Registry registry, ITerraMesher mesher,
-		int viewDistance, float fov, int generationThreads) {
-		this.generationThreads = generationThreads;
+		int viewDistance, float fov, int preparationThreads, ITerraSemaphore preparation, ITerraSemaphore generation) {
+		this.preparationThreads = preparationThreads;
+		this.preparation = preparation;
+		this.generation = generation;
 		this.weltschmerz = weltschmerz;
 		this.terra = terra;
 		this.octree = terra.GetOctree ();
@@ -70,15 +72,12 @@ public class Foreman {
 		queue = new ConcurrentQueue<Tuple<int, int, int>> ();
 		Length = 0;
 
-		for (int i = 0; i < generationThreads; i++) {
+		for (int i = 0; i < preparationThreads; i++) {
 			preparation.Post ();
 		}
 	}
 
-	public void AddLoadMarker (LoadMarker loadMarker, ITerraSemaphore preparation, ITerraSemaphore generation) {
-	
-		this.preparation = preparation;
-		this.generation = generation;
+	public void AddLoadMarker (LoadMarker loadMarker) {
 		if (this.loadMarker == null) {
 			this.loadMarker = loadMarker;
 			Release ();
@@ -144,9 +143,6 @@ public class Foreman {
 			chunk = chunkFiller.GenerateChunk (pos.Item1 << Constants.CHUNK_EXPONENT, pos.Item2 << Constants.CHUNK_EXPONENT,
 				pos.Item3 << Constants.CHUNK_EXPONENT, weltschmerz);
 			if (!chunk.IsSurface) {
-				var temp = chunk.Voxels[0];
-				chunk.Voxels = new Run[1];
-				chunk.Voxels[0] = temp;
 				chunk.x = (uint) pos.Item1 << Constants.CHUNK_EXPONENT;
 				chunk.y = (uint) pos.Item2 << Constants.CHUNK_EXPONENT;
 				chunk.z = (uint) pos.Item3 << Constants.CHUNK_EXPONENT;

@@ -1,6 +1,3 @@
-using System;
-using System.Buffers;
-using System.Collections.Generic;
 public class ChunkFiller {
     private volatile int dirtID;
     private volatile int grassID;
@@ -9,6 +6,7 @@ public class ChunkFiller {
         this.grassID = grassID;
     }
     public Chunk GenerateChunk (float posX, float posY, float posZ, Weltschmerz weltschmerz) {
+        Run run = new Run ();
         Chunk chunk = new Chunk ();
         chunk.Borders = new int[384];
 
@@ -18,7 +16,7 @@ public class ChunkFiller {
 
         chunk.Materials = 1;
 
-        Stack<Run> voxels = new Stack<Run> (Constants.CHUNK_SIZE3D);
+        Run[] voxels = new Run[Constants.CHUNK_SIZE3D];
 
         chunk.IsEmpty = true;
 
@@ -26,7 +24,7 @@ public class ChunkFiller {
         int posz = (int) (posZ * 4);
         int posy = (int) (posY * 4);
 
-        Run run = new Run ();
+        int lastPosition = 0;
 
         chunk.IsSurface = false;
         for (int z = 0; z < Constants.CHUNK_SIZE1D; z++) {
@@ -38,78 +36,70 @@ public class ChunkFiller {
                     if (elevation > 0) {
                         int position = elevation % Constants.CHUNK_SIZE1D;
 
-                        if (voxels.Count > 0) {
-                            run = voxels.Pop ();
+                        if (lastPosition > 0) {
+                            run = voxels[lastPosition - 1];
                             if (run.value == dirtID) {
                                 run.lenght = position + run.lenght;
-                                voxels.Push (run);
+                                voxels[lastPosition - 1] = run;
                             } else {
-                                voxels.Push (run);
-                                run = new Run ();
                                 run.lenght = position;
                                 run.value = dirtID;
-                                voxels.Push (run);
+                                voxels[lastPosition] = run;
+                                lastPosition++;
                             }
                         } else {
-                            run = new Run ();
                             run.lenght = position;
                             run.value = dirtID;
-                            voxels.Push (run);
+                            voxels[lastPosition] = run;
+                            lastPosition++;
                         }
 
-                        run = new Run ();
                         run.lenght = 1;
                         run.value = grassID;
+                        voxels[lastPosition] = run;
+                        lastPosition++;
 
-                        voxels.Push (run);
-
-                        run = new Run ();
                         run.lenght = Constants.CHUNK_SIZE1D - (elevation % Constants.CHUNK_SIZE1D) - 1;
                         run.value = 0;
-
-                        voxels.Push (run);
+                        voxels[lastPosition] = run;
+                        lastPosition++;
 
                         chunk.IsSurface = true;
                         chunk.IsEmpty = false;
                     } else {
                         int position = Constants.CHUNK_SIZE1D;
-                        if (voxels.Count > 0) {
-                            run = voxels.Pop ();
+
+                        if (lastPosition > 0) {
+                            run = voxels[lastPosition - 1];
                             if (run.value == 0) {
                                 run.lenght = position + run.lenght;
-                                voxels.Push (run);
+                                voxels[lastPosition - 1] = run;
                                 continue;
                             }
-
-                            voxels.Push (run);
                         }
 
-                        run = new Run ();
                         run.lenght = position;
                         run.value = 0;
-
-                        voxels.Push (run);
+                        voxels[lastPosition] = run;
+                        lastPosition++;
                     }
                 } else if (elevation / Constants.CHUNK_SIZE1D > posy / Constants.CHUNK_SIZE1D) {
 
                     int position = Constants.CHUNK_SIZE1D;
-
-                    if (voxels.Count > 0) {
-                        run = voxels.Pop ();
+                    if (lastPosition > 0) {
+                        run = voxels[lastPosition - 1];
                         if (run.value == dirtID) {
                             run.lenght = position + run.lenght;
-                            voxels.Push (run);
+                            voxels[lastPosition - 1] = run;
                             continue;
                         }
-
-                        voxels.Push (run);
                     }
 
-                    run = new Run ();
                     run.lenght = position;
                     run.value = dirtID;
 
-                    voxels.Push (run);
+                    voxels[lastPosition] = run;
+                    lastPosition++;
 
                     chunk.IsEmpty = false;
 
@@ -117,40 +107,29 @@ public class ChunkFiller {
 
                     int position = Constants.CHUNK_SIZE1D;
 
-                    if (voxels.Count > 0) {
-
-                        run = voxels.Pop ();
+                    if (lastPosition > 0) {
+                        run = voxels[lastPosition - 1];
                         if (run.value == 0) {
                             run.lenght = position + run.lenght;
-                            voxels.Push (run);
+                            voxels[lastPosition - 1] = run;
                             continue;
                         }
-
-                        voxels.Push (run);
                     }
 
-                    run = new Run ();
                     run.lenght = position;
                     run.value = 0;
 
-                    voxels.Push (run);
+                    voxels[lastPosition] = run;
+                    lastPosition++;
                 }
             }
         }
 
         if (chunk.IsSurface) {
             chunk.Materials = 3;
-            chunk.Voxels = voxels.ToArray ();
-        } else {
-            run = new Run ();
-            if (chunk.IsEmpty) {
-                run.value = 0;
-                chunk.Voxels = new Run[1] { run };
-            } else {
-                run.value = dirtID;
-                chunk.Voxels = new Run[1] { run };
-            }
         }
+
+        chunk.Voxels = voxels;
 
         return chunk;
     }
