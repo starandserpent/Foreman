@@ -1,6 +1,6 @@
 [submodule "modules/Weltschmerz"]
 	path = modules/Weltschmerz
-	url = git@github.com:starandserpent/Weltschmerz.git
+	url = git@github.com:Pawlost/Weltschmerz.git
 [submodule "modules/Terra"]
 	path = modules/Terra
-	url = git@github.com:starandserpent/Terra.git
+	url = git@github.com:Pawlost/Terra.git

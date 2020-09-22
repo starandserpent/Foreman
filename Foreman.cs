@@ -1,31 +1,23 @@
 using System;
-using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 public class Foreman {
 	//This is recommend max static octree size because it takes 134 MB
-	private volatile ITerraMesher mesher;
 	private volatile Octree octree;
 	//private int grassMeshID;
 	private volatile Weltschmerz weltschmerz;
 	private volatile Terra terra;
-	private int maxViewDistance;
-	private float fov;
 	private ChunkFiller chunkFiller;
 	private ConcurrentQueue<Tuple<int, int, int>> queue;
-	private Position[] localCenters;
 	private volatile bool runThread = true;
 	private volatile List<long> chunkSpeed;
-	private volatile LoadMarker loadMarker = null;
 	public volatile static int chunksLoaded = 0;
 	public volatile static int chunksPlaced = 0;
 	public volatile static int positionsScreened = 0;
 	public volatile static int positionsInRange = 0;
 
 	public volatile static int positionsNeeded = 0;
-
-	private ConcurrentDictionary<Tuple<int, int, int>, OctreeNode> leafOctants;
 
 	private Stopwatch stopwatch;
 	private ITerraSemaphore preparation;
@@ -37,128 +29,42 @@ public class Foreman {
 
 	private int preparationThreads;
 
-	public Foreman (Weltschmerz weltschmerz, Terra terra, Registry registry, ITerraMesher mesher,
-		int viewDistance, float fov, int preparationThreads, ITerraSemaphore preparation, ITerraSemaphore generation) {
-		this.preparationThreads = preparationThreads;
-		this.preparation = preparation;
-		this.generation = generation;
+	public Foreman (Weltschmerz weltschmerz, Registry registry, Terra terra, int radius) {
+		chunkFiller = new ChunkFiller (registry.SelectByName ("dirt").worldID, registry.SelectByName ("grass").worldID);
+
 		this.weltschmerz = weltschmerz;
 		this.terra = terra;
-		this.octree = terra.GetOctree ();
-		queue = new ConcurrentQueue<Tuple<int, int, int>> ();
-		maxViewDistance = viewDistance;
-		this.fov = fov;
-		this.mesher = mesher;
-		chunkSpeed = new List<long> ();
-		stopwatch = new Stopwatch ();
-		this.leafOctants = new ConcurrentDictionary<Tuple<int, int, int>, OctreeNode> ();
-
-		List<Position> localCenters = new List<Position> ();
-		for (int l = -maxViewDistance; l < maxViewDistance; l += 8) {
-			for (int y = -Utils.GetPosFromFOV (fov, l); y < Utils.GetPosFromFOV (fov, l); y += 8) {
-				for (int x = -Utils.GetPosFromFOV (fov, l); x < Utils.GetPosFromFOV (fov, l); x += 8) {
-					localCenters.Add (new Position (x, y, -l));
-				}
-			}
-		}
-
-		this.localCenters = localCenters.ToArray ();
-		localCenters.Clear ();
-
-		maxSize = this.localCenters.Length;
-	}
-
-	public void Release () {
-		queue = new ConcurrentQueue<Tuple<int, int, int>> ();
-		Length = 0;
-
-		for (int i = 0; i < preparationThreads; i++) {
-			preparation.Post ();
-		}
-	}
-
-	public void AddLoadMarker (LoadMarker loadMarker) {
-		if (this.loadMarker == null) {
-			this.loadMarker = loadMarker;
-			Release ();
-		}
-	}
-
-	//Initial generation
-
-	public void Process () {
-		while (runThread) {
-			preparation.Wait ();
-			if (Length < maxSize) {
-
-				Position pos = localCenters[Length];
-				pos =  loadMarker.ToGlobal(pos) / 8;
-
-				Tuple<int, int, int> key = new Tuple<int, int, int> (pos.x, pos.y, pos.z);
-				OctreeNode node = null;
-				if (!leafOctants.ContainsKey (key) || leafOctants.TryGetValue (key, out node)) {
-					if (node == null) {
-						node = terra.TraverseOctree (pos.x, pos.y, pos.z, 0);
+		for(int x = 0; x < radius; x ++){
+			for(int y = 0; y < radius; y ++){
+				for(int z = 0; z < radius; z ++){
+					if (terra.CheckBoundries (x, y, z)) {
+						OctreeNode node = terra.TraverseOctree(x, y, z, 0);
+						if(node != null){
+							//Godot.GD.Print("here");
+							LoadArea (x << Constants.CHUNK_EXPONENT, y << Constants.CHUNK_EXPONENT, z << Constants.CHUNK_EXPONENT, node);
+						}
 					}
-
-					if (node != null && node.chunk == null) {
-						leafOctants.TryAdd (key, node);
-						queue.Enqueue (key);
-						generation.Post ();
-					}
-				}
-
-				preparation.Post ();
-
-				Length++;
-			}
-		}
-	}
-
-	public void Generate () {
-		ArrayPool<Position> pool = ArrayPool<Position>.Create (Constants.CHUNK_SIZE3D * 4 * 6, 1);
-		while (runThread) {
-			generation.Wait ();
-			Tuple<int, int, int> pos;
-			OctreeNode node;
-			if (queue.TryDequeue (out pos)) {
-				if (terra.CheckBoundries (pos.Item1, pos.Item2, pos.Item3) && leafOctants.TryGetValue (pos, out node)) {
-					LoadArea (pos, node, pool);
 				}
 			}
 		}
 	}
 
 	//Loads chunks
-	private void LoadArea (Tuple<int, int, int> pos, OctreeNode node, ArrayPool<Position> pool) {
+	private void LoadArea (int posX, int posY, int posZ, OctreeNode node) {
 
 		Chunk chunk;
-		if (pos.Item2 << Constants.CHUNK_EXPONENT > weltschmerz.GetConfig ().elevation.max_elevation) {
+		if (posY > weltschmerz.GetConfig ().elevation.max_elevation) {
 			chunk = new Chunk ();
 			chunk.IsEmpty = true;
-			chunk.x = (uint) pos.Item1 << Constants.CHUNK_EXPONENT;
-			chunk.y = (uint) pos.Item2 << Constants.CHUNK_EXPONENT;
-			chunk.z = (uint) pos.Item3 << Constants.CHUNK_EXPONENT;
 		} else {
-			chunk = chunkFiller.GenerateChunk (pos.Item1 << Constants.CHUNK_EXPONENT, pos.Item2 << Constants.CHUNK_EXPONENT,
-				pos.Item3 << Constants.CHUNK_EXPONENT, weltschmerz);
-			if (!chunk.IsSurface) {
-				chunk.x = (uint) pos.Item1 << Constants.CHUNK_EXPONENT;
-				chunk.y = (uint) pos.Item2 << Constants.CHUNK_EXPONENT;
-				chunk.z = (uint) pos.Item3 << Constants.CHUNK_EXPONENT;
-			}
+			chunk = chunkFiller.GenerateChunk (posX, posY, posZ, weltschmerz);
 		}
 
-		if (!chunk.IsEmpty) {
-			mesher.MeshChunk (chunk, pool);
-			chunksPlaced++;
-		}
+		chunk.x = (uint) posX;
+		chunk.y = (uint) posY;
+		chunk.z = (uint) posZ;
 
 		node.chunk = chunk;
-	}
-
-	public void SetMaterials (Registry registry) {
-		chunkFiller = new ChunkFiller (registry.SelectByName ("dirt").worldID, registry.SelectByName ("grass").worldID);
 	}
 
 	public void Stop () {
