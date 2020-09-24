@@ -1,171 +1,271 @@
-using System;
-using System.Buffers;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Diagnostics;
+using System.Buffers;
 public class Foreman {
-	//This is recommend max static octree size because it takes 134 MB
-	private volatile ITerraMesher mesher;
-	private volatile Octree octree;
-	//private int grassMeshID;
 	private volatile Weltschmerz weltschmerz;
-	private volatile Terra terra;
-	private int maxViewDistance;
-	private float fov;
-	private ChunkFiller chunkFiller;
-	private ConcurrentQueue<Tuple<int, int, int>> queue;
-	private Position[] localCenters;
-	private volatile bool runThread = true;
-	private volatile List<long> chunkSpeed;
-	private volatile LoadMarker loadMarker = null;
-	public volatile static int chunksLoaded = 0;
-	public volatile static int chunksPlaced = 0;
-	public volatile static int positionsScreened = 0;
-	public volatile static int positionsInRange = 0;
+	private int radius;
+	private Terra terra;
+	private Registry registry;
+	public int chunks;
 
-	public volatile static int positionsNeeded = 0;
+	private ConcurrentQueue<Position> fillPositions;
 
-	private ConcurrentDictionary<Tuple<int, int, int>, OctreeNode> leafOctants;
-
-	private Stopwatch stopwatch;
-	private ITerraSemaphore preparation;
-	private ITerraSemaphore generation;
-
-	private int Length = 0;
-
-	private int maxSize;
-
-	private int preparationThreads;
-
-	public Foreman (Weltschmerz weltschmerz, Terra terra, Registry registry, ITerraMesher mesher,
-		int viewDistance, float fov, int preparationThreads, ITerraSemaphore preparation, ITerraSemaphore generation) {
-		this.preparationThreads = preparationThreads;
-		this.preparation = preparation;
-		this.generation = generation;
+	public Foreman (Weltschmerz weltschmerz, Registry registry, Terra terra, int radius)
+	{
+		fillPositions = new ConcurrentQueue<Position>();
 		this.weltschmerz = weltschmerz;
+		this.radius = radius;
 		this.terra = terra;
-		this.octree = terra.GetOctree ();
-		queue = new ConcurrentQueue<Tuple<int, int, int>> ();
-		maxViewDistance = viewDistance;
-		this.fov = fov;
-		this.mesher = mesher;
-		chunkSpeed = new List<long> ();
-		stopwatch = new Stopwatch ();
-		this.leafOctants = new ConcurrentDictionary<Tuple<int, int, int>, OctreeNode> ();
-
-		List<Position> localCenters = new List<Position> ();
-		for (int l = -maxViewDistance; l < maxViewDistance; l += 8) {
-			for (int y = -Utils.GetPosFromFOV (fov, l); y < Utils.GetPosFromFOV (fov, l); y += 8) {
-				for (int x = -Utils.GetPosFromFOV (fov, l); x < Utils.GetPosFromFOV (fov, l); x += 8) {
-					localCenters.Add (new Position (x, y, -l));
-				}
-			}
-		}
-
-		this.localCenters = localCenters.ToArray ();
-		localCenters.Clear ();
-
-		maxSize = this.localCenters.Length;
+		this.registry = registry;
 	}
 
-	public void Release () {
-		queue = new ConcurrentQueue<Tuple<int, int, int>> ();
-		Length = 0;
+	public void Fill()
+	{
+		Position position;
 
-		for (int i = 0; i < preparationThreads; i++) {
-			preparation.Post ();
-		}
-	}
+		while(!fillPositions.IsEmpty)
+		{
+		
+		fillPositions.TryDequeue(out position);
 
-	public void AddLoadMarker (LoadMarker loadMarker) {
-		if (this.loadMarker == null) {
-			this.loadMarker = loadMarker;
-			Release ();
-		}
-	}
+		int x = position.x;
+		int y = position.y;
+		int z = position.z;
 
-	//Initial generation
+		if (terra.CheckBoundries (x, y, z)) {
+			OctreeNode node = terra.TraverseOctree(x, y, z, 0);
+			if(node != null){
+				Chunk chunk;
+				if(node.chunk == null){
+					chunk = new Chunk();
+							node.chunk = chunk;
 
-	public void Process () {
-		while (runThread) {
-			preparation.Wait ();
-			if (Length < maxSize) {
+								chunk.x = (uint) (x << Constants.CHUNK_EXPONENT);
+								chunk.y = (uint) (y << Constants.CHUNK_EXPONENT);
+								chunk.z = (uint) (z << Constants.CHUNK_EXPONENT);
+							}else
+							{
+								chunk = node.chunk;
+							}
 
-				Position pos = localCenters[Length];
-				pos =  loadMarker.ToGlobal(pos) / 8;
-
-				Tuple<int, int, int> key = new Tuple<int, int, int> (pos.x, pos.y, pos.z);
-				OctreeNode node = null;
-				if (!leafOctants.ContainsKey (key) || leafOctants.TryGetValue (key, out node)) {
-					if (node == null) {
-						node = terra.TraverseOctree (pos.x, pos.y, pos.z, 0);
-					}
-
-					if (node != null && node.chunk == null) {
-						leafOctants.TryAdd (key, node);
-						queue.Enqueue (key);
-						generation.Post ();
-					}
-				}
-
-				preparation.Post ();
-
-				Length++;
+							AddMaterialsToChunk(registry, chunk);
+						}
 			}
 		}
 	}
 
-	public void Generate () {
-		ArrayPool<Position> pool = ArrayPool<Position>.Create (Constants.CHUNK_SIZE3D * 4 * 6, 1);
-		while (runThread) {
-			generation.Wait ();
-			Tuple<int, int, int> pos;
-			OctreeNode node;
-			if (queue.TryDequeue (out pos)) {
-				if (terra.CheckBoundries (pos.Item1, pos.Item2, pos.Item3) && leafOctants.TryGetValue (pos, out node)) {
-					LoadArea (pos, node, pool);
+	public void SetOrigin(int originX, int originY, int originZ)
+	{
+		for(int x = originX - radius; x < originX + radius; x++)
+		{
+			for(int y = originX - radius; y < originY + radius; y++)
+			{
+				for(int z = originX - radius; z < originZ + radius; z++)
+				{
+					fillPositions.Enqueue(new Position(x, y, z));
 				}
 			}
 		}
+	}
+
+	private void AddMaterialsToChunk(Registry registry, Chunk chunk)
+	{
+		int[] tempChunk = ArrayPool<int>.Shared.Rent(Constants.CHUNK_SIZE3D);
+
+		foreach(TerraObject tobject in registry)
+		{
+			chunk.Materials ++;
+
+			if(tobject.worldID != 0)
+			{
+				if(tobject.IsSurface)
+				{
+					FillChunkSurface (chunk, tempChunk, tobject.worldID);
+				}
+				else
+				{
+					FillChunk (chunk, tempChunk, tobject.worldID);
+				}
+			}
+		}
+
+		ParseToRLE(chunk, tempChunk);
+
+		if(!chunk.IsSolid){
+			MakeChunkBorders(chunk, tempChunk);
+		}
+
+		chunks ++;
+		ArrayPool<int>.Shared.Return(tempChunk);
 	}
 
 	//Loads chunks
-	private void LoadArea (Tuple<int, int, int> pos, OctreeNode node, ArrayPool<Position> pool) {
+	private void FillChunkSurface (Chunk chunk, int[] tempChunk, int materialID) 
+	{   
+		for(int x = 0; x < Constants.CHUNK_SIZE1D; x++)
+		{
+			for(int z = 0; z < Constants.CHUNK_SIZE1D; z++)
+			{
+				double elevation = weltschmerz.GetElevation(x + (int) (chunk.x / Constants.VOXEL_SIZE), z + (int) (chunk.z / Constants.VOXEL_SIZE));
+				int chunkElevation = (int) elevation/Constants.CHUNK_SIZE1D;
+				if(chunkElevation == (int) (chunk.y / Constants.CHUNK_LENGHT))
+				{
+					tempChunk[(int)(elevation%Constants.CHUNK_SIZE1D) + x * Constants.CHUNK_SIZE1D + z * Constants.CHUNK_SIZE2D] = materialID;
+				}
+			}
+		}
+	}
 
-		Chunk chunk;
-		if (pos.Item2 << Constants.CHUNK_EXPONENT > weltschmerz.GetConfig ().elevation.max_elevation) {
-			chunk = new Chunk ();
-			chunk.IsEmpty = true;
-			chunk.x = (uint) pos.Item1 << Constants.CHUNK_EXPONENT;
-			chunk.y = (uint) pos.Item2 << Constants.CHUNK_EXPONENT;
-			chunk.z = (uint) pos.Item3 << Constants.CHUNK_EXPONENT;
-		} else {
-			chunk = chunkFiller.GenerateChunk (pos.Item1 << Constants.CHUNK_EXPONENT, pos.Item2 << Constants.CHUNK_EXPONENT,
-				pos.Item3 << Constants.CHUNK_EXPONENT, weltschmerz);
-			if (!chunk.IsSurface) {
-				chunk.x = (uint) pos.Item1 << Constants.CHUNK_EXPONENT;
-				chunk.y = (uint) pos.Item2 << Constants.CHUNK_EXPONENT;
-				chunk.z = (uint) pos.Item3 << Constants.CHUNK_EXPONENT;
+	private void FillChunk (Chunk chunk, int[] tempChunk, int materialID) {
+
+		for(int x = 0; x < Constants.CHUNK_SIZE1D; x++)
+		{
+			for(int z = 0; z < Constants.CHUNK_SIZE1D; z++)
+			{
+				int elevation = (int) weltschmerz.GetElevation(x + (int) (chunk.x / Constants.VOXEL_SIZE), z + (int) (chunk.z / Constants.VOXEL_SIZE));
+				for(int y = 0; y < Constants.CHUNK_SIZE1D; y++)
+				{
+					
+					if(elevation > (int) (chunk.y / Constants.VOXEL_SIZE) + y){
+						tempChunk[y + x * Constants.CHUNK_SIZE1D + z * Constants.CHUNK_SIZE2D] = materialID;
+					}else
+					{
+						tempChunk[y + x * Constants.CHUNK_SIZE1D + z * Constants.CHUNK_SIZE2D] = 0;
+					}
+				}
+			}
+		}
+	}
+
+	private void MakeChunkBorders(Chunk chunk, int[] tempChunk)
+	{
+		for(int s = 0; s < 6; s ++)
+		{
+			bool[] borders = chunk.Borders[s];
+			for(int x = 0; x < Constants.CHUNK_SIZE1D; x++)
+			{
+				for(int z = 0; z < Constants.CHUNK_SIZE1D; z++)
+				{
+					switch(s)
+					{
+						//Front
+						case 0:
+							if(tempChunk[x + z * Constants.CHUNK_SIZE1D] != 0)
+							{
+								borders[x + z * Constants.CHUNK_SIZE1D] = true;
+							}
+							else
+							{
+								borders[x + z * Constants.CHUNK_SIZE1D] = false;
+							}
+						break;
+
+						//Back
+						case 1:
+						if(tempChunk[x + z * Constants.CHUNK_SIZE1D + (Constants.CHUNK_SIZE3D - Constants.CHUNK_SIZE2D)] != 0)
+							{
+								borders[x + z * Constants.CHUNK_SIZE1D] = true;
+							}
+							else
+							{
+								borders[x + z * Constants.CHUNK_SIZE1D] = false;
+							}
+						break;
+
+						//Right
+						case 2:
+						if(tempChunk[x + (Constants.CHUNK_SIZE2D - Constants.CHUNK_SIZE1D) + z * Constants.CHUNK_SIZE2D] != 0)
+							{
+								borders[x + z * Constants.CHUNK_SIZE1D] = true;
+							}
+							else
+							{
+								borders[x + z * Constants.CHUNK_SIZE1D] = false;
+							}
+						break;
+
+						//Left
+						case 3:
+						if(tempChunk[x + z * Constants.CHUNK_SIZE2D] != 0)
+							{
+								borders[x + z * Constants.CHUNK_SIZE1D] = true;
+							}
+							else
+							{
+								borders[x + z * Constants.CHUNK_SIZE1D] = false;
+							}
+						break;
+
+						//Top
+						case 4:
+						if(tempChunk[(Constants.CHUNK_SIZE1D - 1) + x * Constants.CHUNK_SIZE1D + z * Constants.CHUNK_SIZE2D] != 0)
+							{
+								borders[x + z * Constants.CHUNK_SIZE1D] = true;
+							}
+							else
+							{
+								borders[x + z * Constants.CHUNK_SIZE1D] = false;
+							}
+						break;
+
+						//Bottom
+						case 5:
+						if(tempChunk[x * Constants.CHUNK_SIZE1D + z * Constants.CHUNK_SIZE2D] != 0)
+							{
+								borders[x + z * Constants.CHUNK_SIZE1D] = true;
+							}
+							else
+							{
+								borders[x + z * Constants.CHUNK_SIZE1D] = false;
+							}
+						break;
+				}
+			}
+		}
+		}
+	}
+
+	private void ParseToRLE(Chunk chunk, int[] tempChunk)
+	{
+		int prevId = -1;
+		for(int i = 0; i < Constants.CHUNK_SIZE3D; i ++)
+		{
+			int id = tempChunk[i];
+
+			if(id == prevId)
+			{
+			   Run run = chunk.Voxels[chunk.Voxels.Count - 1];
+			   run.lenght ++;
+			   chunk.Voxels[chunk.Voxels.Count - 1] = run;
+			}
+			else
+			{
+				prevId = id;
+				Run run = new Run();
+				run.lenght ++;
+				run.value = id;
+				chunk.Voxels.Add(run);
 			}
 		}
 
-		if (!chunk.IsEmpty) {
-			mesher.MeshChunk (chunk, pool);
-			chunksPlaced++;
+
+		if(chunk.Voxels.Count == 1)
+		{
+			chunk.IsSolid = true;
+			if(chunk.Voxels[0].value == 0)
+			{
+				chunk.IsEmpty = true;
+			}
+			chunk.Materials = 1;
+		}else
+		{
+			chunk.IsSurface = true;
 		}
 
-		node.chunk = chunk;
+		chunk.IsFilled = true;
 	}
 
-	public void SetMaterials (Registry registry) {
-		chunkFiller = new ChunkFiller (registry.SelectByName ("dirt").worldID, registry.SelectByName ("grass").worldID);
-	}
-
-	public void Stop () {
-		runThread = false;
-	}
-
-	public List<long> GetMeasures () {
-		return chunkSpeed;
+	public int GetPrefillSize()
+	{
+		return fillPositions.Count;
 	}
 }
