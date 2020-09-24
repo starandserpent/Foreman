@@ -61,7 +61,7 @@ public class Foreman {
 		ParseToRLE(chunk, tempChunk);
 
 		if(!chunk.IsSolid){
-			//MakeChunkBorders(chunk, tempChunk);
+			MakeChunkBorders(chunk, tempChunk);
 		}
 
 		chunks ++;
@@ -131,7 +131,7 @@ public class Foreman {
 
 						//Back
 						case 1:
-						if(tempChunk[x + z * Constants.CHUNK_SIZE1D + Constants.CHUNK_SIZE2D] != 0)
+						if(tempChunk[x + z * Constants.CHUNK_SIZE1D + (Constants.CHUNK_SIZE3D - Constants.CHUNK_SIZE2D)] != 0)
 							{
 								borders[x + z * Constants.CHUNK_SIZE1D] = true;
 							}
@@ -143,7 +143,7 @@ public class Foreman {
 
 						//Right
 						case 2:
-						if(tempChunk[Constants.CHUNK_SIZE1D + x * Constants.CHUNK_SIZE1D + z * Constants.CHUNK_SIZE2D] != 0)
+						if(tempChunk[x + (Constants.CHUNK_SIZE2D - Constants.CHUNK_SIZE1D) + z * Constants.CHUNK_SIZE2D] != 0)
 							{
 								borders[x + z * Constants.CHUNK_SIZE1D] = true;
 							}
@@ -155,7 +155,7 @@ public class Foreman {
 
 						//Left
 						case 3:
-						if(tempChunk[x * Constants.CHUNK_SIZE1D + z * Constants.CHUNK_SIZE2D] != 0)
+						if(tempChunk[x + z * Constants.CHUNK_SIZE2D] != 0)
 							{
 								borders[x + z * Constants.CHUNK_SIZE1D] = true;
 							}
@@ -167,7 +167,7 @@ public class Foreman {
 
 						//Top
 						case 4:
-						if(tempChunk[x + Constants.CHUNK_SIZE2D + z * Constants.CHUNK_SIZE2D] != 0)
+						if(tempChunk[(Constants.CHUNK_SIZE1D - 1) + x * Constants.CHUNK_SIZE1D + z * Constants.CHUNK_SIZE2D] != 0)
 							{
 								borders[x + z * Constants.CHUNK_SIZE1D] = true;
 							}
@@ -179,7 +179,7 @@ public class Foreman {
 
 						//Bottom
 						case 5:
-						if(tempChunk[x + z * Constants.CHUNK_SIZE2D] != 0)
+						if(tempChunk[x * Constants.CHUNK_SIZE1D + z * Constants.CHUNK_SIZE2D] != 0)
 							{
 								borders[x + z * Constants.CHUNK_SIZE1D] = true;
 							}
