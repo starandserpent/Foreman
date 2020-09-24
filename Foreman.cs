@@ -1,25 +1,43 @@
-using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Buffers;
 public class Foreman {
 	private volatile Weltschmerz weltschmerz;
 	private int radius;
-
+	private Terra terra;
+	private Registry registry;
 	public int chunks;
+
+	private ConcurrentQueue<Position> fillPositions;
+
 	public Foreman (Weltschmerz weltschmerz, Registry registry, Terra terra, int radius)
 	{
+		fillPositions = new ConcurrentQueue<Position>();
 		this.weltschmerz = weltschmerz;
 		this.radius = radius;
+		this.terra = terra;
+		this.registry = registry;
+	}
 
-		for(int x = 0; x < radius; x ++){
-			for(int y = 0; y < radius; y ++){
-				for(int z = 0; z < radius; z ++){
-					if (terra.CheckBoundries (x, y, z)) {
-						OctreeNode node = terra.TraverseOctree(x, y, z, 0);
-						if(node != null){
-							Chunk chunk;
-							if(node.chunk == null){
-								chunk = new Chunk();
-								node.chunk = chunk;
+	public void Fill()
+	{
+		Position position;
+
+		while(!fillPositions.IsEmpty)
+		{
+		
+		fillPositions.TryDequeue(out position);
+
+		int x = position.x;
+		int y = position.y;
+		int z = position.z;
+
+		if (terra.CheckBoundries (x, y, z)) {
+			OctreeNode node = terra.TraverseOctree(x, y, z, 0);
+			if(node != null){
+				Chunk chunk;
+				if(node.chunk == null){
+					chunk = new Chunk();
+							node.chunk = chunk;
 
 								chunk.x = (uint) (x << Constants.CHUNK_EXPONENT);
 								chunk.y = (uint) (y << Constants.CHUNK_EXPONENT);
@@ -31,7 +49,19 @@ public class Foreman {
 
 							AddMaterialsToChunk(registry, chunk);
 						}
-					}
+			}
+		}
+	}
+
+	public void SetOrigin(int originX, int originY, int originZ)
+	{
+		for(int x = originX - radius; x < originX + radius; x++)
+		{
+			for(int y = originX - radius; y < originY + radius; y++)
+			{
+				for(int z = originX - radius; z < originZ + radius; z++)
+				{
+					fillPositions.Enqueue(new Position(x, y, z));
 				}
 			}
 		}
@@ -232,5 +262,10 @@ public class Foreman {
 		}
 
 		chunk.IsFilled = true;
+	}
+
+	public int GetPrefillSize()
+	{
+		return fillPositions.Count;
 	}
 }
