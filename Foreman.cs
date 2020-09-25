@@ -31,26 +31,25 @@ public class Foreman {
 		int y = position.y;
 		int z = position.z;
 
-		if (terra.CheckBoundries (x, y, z)) {
-			OctreeNode node = terra.TraverseOctree(x, y, z, 0);
+		OctreeNode node = terra.TraverseOctree(x, y, z, 0);
 			if(node != null){
 				Chunk chunk;
 				if(node.chunk == null){
 					chunk = new Chunk();
-							node.chunk = chunk;
+						node.chunk = chunk;
 
-								chunk.x = (uint) (x << Constants.CHUNK_EXPONENT);
-								chunk.y = (uint) (y << Constants.CHUNK_EXPONENT);
-								chunk.z = (uint) (z << Constants.CHUNK_EXPONENT);
-							}else
-							{
-								chunk = node.chunk;
-							}
+						chunk.x = (uint) (x << Constants.CHUNK_EXPONENT);
+						chunk.y = (uint) (y << Constants.CHUNK_EXPONENT);
+						chunk.z = (uint) (z << Constants.CHUNK_EXPONENT);
+					}
+					else
+					{
+						chunk = node.chunk;
+					}
 
-							AddMaterialsToChunk(registry, chunk);
-						}
+					AddMaterialsToChunk(registry, chunk);
+				}
 			}
-		}
 	}
 
 	public void SetOrigin(int originX, int originY, int originZ)
@@ -144,7 +143,7 @@ public class Foreman {
 			bool[] borders = chunk.Borders[s];
 			switch(s)
 			{
-						//Front
+				//Front
 				case 0:
 					for(int i = 0; i < Constants.CHUNK_SIZE2D; i++)
 					{
