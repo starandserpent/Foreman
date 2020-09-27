@@ -27,20 +27,16 @@ public class Foreman {
 		
 		fillPositions.TryDequeue(out position);
 
-		int x = position.x;
-		int y = position.y;
-		int z = position.z;
-
-		OctreeNode node = terra.TraverseOctree(x, y, z, 0);
+		OctreeNode node = terra.TraverseOctree(position.x, position.y, position.z, 0);
 			if(node != null){
 				Chunk chunk;
 				if(node.chunk == null){
 					chunk = new Chunk();
 						node.chunk = chunk;
 
-						chunk.x = (uint) (x << Constants.CHUNK_EXPONENT);
-						chunk.y = (uint) (y << Constants.CHUNK_EXPONENT);
-						chunk.z = (uint) (z << Constants.CHUNK_EXPONENT);
+						chunk.x = position.x;
+						chunk.y = position.y;
+						chunk.z = position.z;
 					}
 					else
 					{
@@ -60,7 +56,7 @@ public class Foreman {
 			{
 				for(int z = originX - radius; z < originZ + radius; z++)
 				{
-					fillPositions.Enqueue(new Position(x, y, z));
+					fillPositions.Enqueue(new Position(x * (int) Constants.CHUNK_LENGHT, y * (int) Constants.CHUNK_LENGHT, z * (int) Constants.CHUNK_LENGHT));
 				}
 			}
 		}
@@ -68,7 +64,10 @@ public class Foreman {
 
 	private void AddMaterialsToChunk(Registry registry, Chunk chunk)
 	{
-		int[] tempChunk = ArrayPool<int>.Shared.Rent(Constants.CHUNK_SIZE3D);
+		if(!chunk.IsFilled)
+		{
+			chunk.Materials = 0;
+			int[] tempChunk = ArrayPool<int>.Shared.Rent(Constants.CHUNK_SIZE3D);
 
 		foreach(TerraObject tobject in registry)
 		{
@@ -87,6 +86,7 @@ public class Foreman {
 			}
 		}
 
+
 		ParseToRLE(chunk, tempChunk);
 
 		if(!chunk.IsSolid){
@@ -95,6 +95,7 @@ public class Foreman {
 
 		chunks ++;
 		ArrayPool<int>.Shared.Return(tempChunk);
+		}
 	}
 
 	//Loads chunks
