@@ -27,30 +27,25 @@ public class Foreman {
 		
 		fillPositions.TryDequeue(out position);
 
-		int x = position.x;
-		int y = position.y;
-		int z = position.z;
-
-		if (terra.CheckBoundries (x, y, z)) {
-			OctreeNode node = terra.TraverseOctree(x, y, z, 0);
+		OctreeNode node = terra.TraverseOctree(position.x, position.y, position.z, 0);
 			if(node != null){
 				Chunk chunk;
 				if(node.chunk == null){
 					chunk = new Chunk();
-							node.chunk = chunk;
+						node.chunk = chunk;
 
-								chunk.x = (uint) (x << Constants.CHUNK_EXPONENT);
-								chunk.y = (uint) (y << Constants.CHUNK_EXPONENT);
-								chunk.z = (uint) (z << Constants.CHUNK_EXPONENT);
-							}else
-							{
-								chunk = node.chunk;
-							}
+						chunk.x = position.x;
+						chunk.y = position.y;
+						chunk.z = position.z;
+					}
+					else
+					{
+						chunk = node.chunk;
+					}
 
-							AddMaterialsToChunk(registry, chunk);
-						}
+					AddMaterialsToChunk(registry, chunk);
+				}
 			}
-		}
 	}
 
 	public void SetOrigin(int originX, int originY, int originZ)
@@ -61,7 +56,7 @@ public class Foreman {
 			{
 				for(int z = originX - radius; z < originZ + radius; z++)
 				{
-					fillPositions.Enqueue(new Position(x, y, z));
+					fillPositions.Enqueue(new Position(x * (int) Constants.CHUNK_LENGHT, y * (int) Constants.CHUNK_LENGHT, z * (int) Constants.CHUNK_LENGHT));
 				}
 			}
 		}
@@ -69,7 +64,10 @@ public class Foreman {
 
 	private void AddMaterialsToChunk(Registry registry, Chunk chunk)
 	{
-		int[] tempChunk = ArrayPool<int>.Shared.Rent(Constants.CHUNK_SIZE3D);
+		if(!chunk.IsFilled)
+		{
+			chunk.Materials = 0;
+			int[] tempChunk = ArrayPool<int>.Shared.Rent(Constants.CHUNK_SIZE3D);
 
 		foreach(TerraObject tobject in registry)
 		{
@@ -88,6 +86,7 @@ public class Foreman {
 			}
 		}
 
+
 		ParseToRLE(chunk, tempChunk);
 
 		if(!chunk.IsSolid){
@@ -96,6 +95,7 @@ public class Foreman {
 
 		chunks ++;
 		ArrayPool<int>.Shared.Return(tempChunk);
+		}
 	}
 
 	//Loads chunks
@@ -138,89 +138,72 @@ public class Foreman {
 
 	private void MakeChunkBorders(Chunk chunk, int[] tempChunk)
 	{
+		int x, z;
 		for(int s = 0; s < 6; s ++)
 		{
 			bool[] borders = chunk.Borders[s];
-			for(int x = 0; x < Constants.CHUNK_SIZE1D; x++)
+			switch(s)
 			{
-				for(int z = 0; z < Constants.CHUNK_SIZE1D; z++)
-				{
-					switch(s)
+				//Front
+				case 0:
+					for(int i = 0; i < Constants.CHUNK_SIZE2D; i++)
 					{
-						//Front
-						case 0:
-							if(tempChunk[x + z * Constants.CHUNK_SIZE1D] != 0)
-							{
-								borders[x + z * Constants.CHUNK_SIZE1D] = true;
-							}
-							else
-							{
-								borders[x + z * Constants.CHUNK_SIZE1D] = false;
-							}
-						break;
-
+						x = i % Constants.CHUNK_SIZE1D;
+						z = i / Constants.CHUNK_SIZE1D;
+						borders[x + z * Constants.CHUNK_SIZE1D] = tempChunk[x + z * Constants.CHUNK_SIZE1D] != 0;
+					}
+				break;
+						
 						//Back
-						case 1:
-						if(tempChunk[x + z * Constants.CHUNK_SIZE1D + (Constants.CHUNK_SIZE3D - Constants.CHUNK_SIZE2D)] != 0)
-							{
-								borders[x + z * Constants.CHUNK_SIZE1D] = true;
-							}
-							else
-							{
-								borders[x + z * Constants.CHUNK_SIZE1D] = false;
-							}
+				case 1:
+						for(int i = 0; i < Constants.CHUNK_SIZE2D; i++)
+						{
+							x = i % Constants.CHUNK_SIZE1D;
+							z = i / Constants.CHUNK_SIZE1D;
+							borders[x + z * Constants.CHUNK_SIZE1D] = tempChunk[x + z * Constants.CHUNK_SIZE1D + (Constants.CHUNK_SIZE3D - Constants.CHUNK_SIZE2D)] != 0;
+						}
 						break;
 
 						//Right
 						case 2:
-						if(tempChunk[x + (Constants.CHUNK_SIZE2D - Constants.CHUNK_SIZE1D) + z * Constants.CHUNK_SIZE2D] != 0)
-							{
-								borders[x + z * Constants.CHUNK_SIZE1D] = true;
-							}
-							else
-							{
-								borders[x + z * Constants.CHUNK_SIZE1D] = false;
-							}
+						for(int i = 0; i < Constants.CHUNK_SIZE2D; i++)
+						{
+							x = i % Constants.CHUNK_SIZE1D;
+							z = i / Constants.CHUNK_SIZE1D;
+							borders[x + z * Constants.CHUNK_SIZE1D] = tempChunk[x + (Constants.CHUNK_SIZE2D - Constants.CHUNK_SIZE1D) + z * Constants.CHUNK_SIZE2D] != 0;
+						}
 						break;
 
 						//Left
 						case 3:
-						if(tempChunk[x + z * Constants.CHUNK_SIZE2D] != 0)
-							{
-								borders[x + z * Constants.CHUNK_SIZE1D] = true;
-							}
-							else
-							{
-								borders[x + z * Constants.CHUNK_SIZE1D] = false;
-							}
+						for(int i = 0; i < Constants.CHUNK_SIZE2D; i++)
+						{
+							x = i % Constants.CHUNK_SIZE1D;
+							z = i / Constants.CHUNK_SIZE1D;
+							borders[x + z * Constants.CHUNK_SIZE1D] = tempChunk[x + z * Constants.CHUNK_SIZE2D] != 0;
+						}
 						break;
 
 						//Top
 						case 4:
-						if(tempChunk[(Constants.CHUNK_SIZE1D - 1) + x * Constants.CHUNK_SIZE1D + z * Constants.CHUNK_SIZE2D] != 0)
-							{
-								borders[x + z * Constants.CHUNK_SIZE1D] = true;
-							}
-							else
-							{
-								borders[x + z * Constants.CHUNK_SIZE1D] = false;
-							}
+						for(int i = 0; i < Constants.CHUNK_SIZE2D; i++)
+						{
+							x = i % Constants.CHUNK_SIZE1D;
+							z = i / Constants.CHUNK_SIZE1D;
+							borders[x + z * Constants.CHUNK_SIZE1D] = tempChunk[(Constants.CHUNK_SIZE1D - 1) + x * Constants.CHUNK_SIZE1D + z * Constants.CHUNK_SIZE2D] != 0;
+						}
 						break;
 
 						//Bottom
 						case 5:
-						if(tempChunk[x * Constants.CHUNK_SIZE1D + z * Constants.CHUNK_SIZE2D] != 0)
-							{
-								borders[x + z * Constants.CHUNK_SIZE1D] = true;
-							}
-							else
-							{
-								borders[x + z * Constants.CHUNK_SIZE1D] = false;
-							}
+						for(int i = 0; i < Constants.CHUNK_SIZE2D; i++)
+						{
+							x = i % Constants.CHUNK_SIZE1D;
+							z = i / Constants.CHUNK_SIZE1D;
+							borders[x + z * Constants.CHUNK_SIZE1D] = tempChunk[x * Constants.CHUNK_SIZE1D + z * Constants.CHUNK_SIZE2D] != 0;
+						}
 						break;
 				}
-			}
-		}
 		}
 	}
 
